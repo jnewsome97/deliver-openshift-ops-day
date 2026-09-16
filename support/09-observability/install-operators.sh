@@ -38,10 +38,13 @@ metadata:
   name: loki-operator
   namespace: openshift-operators-redhat
 spec:
-  channel: stable-6.6
+  # loki-operator is not in the live OCP 5 redhat-operators index; only
+  # available in the pinned snapshot catalog for now, which tops out at
+  # stable-6.4.
+  channel: stable-6.4
   installPlanApproval: Automatic
   name: loki-operator
-  source: redhat-operators
+  source: redhat-operators-snapshot-lightspeed
   sourceNamespace: openshift-marketplace
 LOKIEOF
 fi
@@ -53,10 +56,13 @@ metadata:
   name: cluster-logging
   namespace: openshift-logging
 spec:
-  channel: stable-6.6
+  # cluster-logging is not in the live OCP 5 redhat-operators index; only
+  # available in the pinned snapshot catalog for now, which tops out at
+  # stable-6.4.
+  channel: stable-6.4
   installPlanApproval: Automatic
   name: cluster-logging
-  source: redhat-operators
+  source: redhat-operators-snapshot-lightspeed
   sourceNamespace: openshift-marketplace
 ---
 apiVersion: operators.coreos.com/v1alpha1
