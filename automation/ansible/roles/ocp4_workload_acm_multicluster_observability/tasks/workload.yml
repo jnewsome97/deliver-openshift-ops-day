@@ -43,6 +43,11 @@
       type: kubernetes.io/dockerconfigjson
 
 - name: Check ODF is ready
+  # For external StorageClusters, ocs-operator keeps status.phase gated
+  # on overall Ceph health (HEALTH_WARN blocks Ready) even when NooBaa
+  # is functionally ready and serving. The actual precondition for the
+  # Object Bucket Claim below is NooBaa readiness, checked next, so this
+  # is non-blocking.
   k8s_info:
     validate_certs: false
     api_version: ocs.openshift.io/v1
@@ -53,6 +58,7 @@
     - r_storagecluster.resources.0.status.phase == "Ready"
   retries: 30
   delay: 30
+  ignore_errors: true
 
 - name: Check NooBaa is ready
   k8s_info:
