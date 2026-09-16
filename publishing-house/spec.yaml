@@ -138,7 +138,7 @@ spec:
       - "registry.connect.redhat.com"
       - "quay.io"
       - "github.com"
-      - "ldap.jumpcl0ud.com:636"
+      # LDAP uses in-cluster glauth (no external LDAP service required)
     gpu_nodes: 0
     gpu_type: ""
   duration_hours: 6
@@ -183,7 +183,7 @@ approval_checklist:
       - title: "GitOps"
         overview: "Deploy a GitOps workflow with an ArgoCD Application CR, introduce configuration drift, observe ArgoCD's detection and self-healing behavior, and verify the cluster state converges."
       - title: "Identity - LDAP"
-        overview: "Configure JumpCloud as an LDAP identity provider on OpenShift, set up group synchronization with a CronJob, and assign RBAC roles to synced groups."
+        overview: "Deploy an in-cluster LDAP server (glauth) pre-loaded with workshop users and groups, configure it as an LDAP identity provider on OpenShift, set up group synchronization with a CronJob, and assign RBAC roles to synced groups."
       - title: "Identity - OIDC"
         overview: "Install the Red Hat build of Keycloak operator, configure an OIDC identity provider on OpenShift, and implement automatic group sync driven by token claims."
       - title: "Observability & Logging"
