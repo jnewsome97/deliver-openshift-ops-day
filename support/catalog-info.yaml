@@ -1,0 +1,42 @@
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: ops-team
+  description: Operations team responsible for platform infrastructure
+spec:
+  type: team
+  children: []
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: weather-app
+  description: Weather microservices application used in the Ops Track troubleshooting module
+  annotations:
+    backstage.io/kubernetes-namespace: ops-track-demo
+    backstage.io/kubernetes-id: weather-app
+  tags:
+    - openshift
+    - ops-track
+    - httpd
+spec:
+  type: service
+  lifecycle: production
+  owner: ops-team
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: backup-demo-app
+  description: Web application protected by OADP backup and restore
+  annotations:
+    backstage.io/kubernetes-namespace: backup-demo
+    backstage.io/kubernetes-id: backup-demo-app
+  tags:
+    - openshift
+    - ops-track
+    - oadp
+spec:
+  type: service
+  lifecycle: production
+  owner: ops-team

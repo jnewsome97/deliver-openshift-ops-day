@@ -12,6 +12,8 @@ image::ops-day-banner.png[OpenShift Ops Day, width=100%]
 
 You have cluster admin access to a live OpenShift cluster. Let's make sure everything's working - click the commands below:
 
+First, a quick word on `oc`: it's the OpenShift CLI - like `kubectl`, but with extra OpenShift-specific commands (Routes, Projects, and more). Every `oc` command below runs in the **Terminal** tab, a web-based shell already connected and authenticated to your cluster - no local install or login required. Clicking a highlighted command block automatically switches to that tab and runs it for you.
+
 [source,bash,role="execute"]
 ----
 oc whoami
@@ -109,11 +111,11 @@ TIP: Highlighted command blocks are **clickable** - they switch to the Terminal 
 image::diagrams/01_platform_architecture.png[OpenShift Platform Architecture, align=center, link=self, window=blank]
 Your cluster is already running with monitoring, a container registry, ingress routing, and a web console - all built in. Let's see what's there.
 
-=== Step 1: Access the Administrator Console
+=== Step 1: Access the Core Platform Console
 
 The OpenShift Web Console provides a unified view of your entire cluster.
 
-image::ocp-console-overview.png[OpenShift Administrator Console Overview, link=self, window=blank]
+image::ocp-console-overview.png[OpenShift Core Platform Console Overview, link=self, window=blank]
 You can access the console in two ways:
 
 * **OCP Console tab** - Click the **OCP Console** tab at the top of this workshop. The console is embedded directly in the workshop interface so you can follow along without switching windows.
@@ -132,15 +134,15 @@ Administrator login credentials:
 | *Password:* | {openshift_cluster_admin_password}
 |===
 
-=== Step 2: Switch to Administrator Perspective
+=== Step 2: Switch to Core Platform Perspective
 
-In the top-left corner of the console, you'll see a perspective switcher dropdown. Click the dropdown and select **Administrator**.
+In the top-left corner of the console, you'll see a perspective switcher dropdown. Click the dropdown and select **Core Platform**.
 
 === Step 3: Dashboard Overview
 
-Once in the Administrator perspective, you'll see the **Overview** dashboard under **Home → Overview**.
+Once in the Core Platform perspective, you'll see the **Overview** dashboard under **Home -> Overview**.
 
-image::ocp-dashboard-overview.png[OpenShift Administrator Dashboard Overview, link=self, window=blank]
+image::ocp-dashboard-overview.png[OpenShift Core Platform Dashboard Overview, link=self, window=blank]
 **Key sections to notice:**
 
 1. **Cluster Status** - Overall health at a glance
@@ -289,7 +291,7 @@ Get the URL and test it:
 
 [source,bash,role="execute"]
 ----
-curl -sk https://$(oc get route hello -n quick-demo -o jsonpath='{.spec.host}') | grep title
+curl -sk https://$(oc get route hello -n quick-demo -o jsonpath='{.spec.host}') | head -3
 ----
 
 You should see the httpd test page HTML. That's a deployed app, with a service, a TLS-terminated route, and automatic DNS - in three commands.
@@ -298,7 +300,8 @@ Clean up (runs in the background so we can move on):
 
 [source,bash,role="execute"]
 ----
-oc delete project quick-demo &>/dev/null & disown
+oc delete project quick-demo &>/dev/null &
+disown
 ----
 
 == Cluster Management
@@ -316,9 +319,9 @@ Your environment uses a **compact cluster** - 3 nodes that serve as both control
 
 ----
 NAME                            STATUS   ROLES                         AGE   VERSION
-control-plane-cluster-xxxxx-1   Ready    control-plane,master,worker   20h   v1.33.6
-control-plane-cluster-xxxxx-2   Ready    control-plane,master,worker   20h   v1.33.6
-control-plane-cluster-xxxxx-3   Ready    control-plane,master,worker   20h   v1.33.6
+control-plane-cluster-xxxxx-1   Ready    control-plane,master,worker   20h   v1.x.x
+control-plane-cluster-xxxxx-2   Ready    control-plane,master,worker   20h   v1.x.x
+control-plane-cluster-xxxxx-3   Ready    control-plane,master,worker   20h   v1.x.x
 ----
 
 NOTE: Node names and count vary by deployment. Production clusters typically have separate control plane and worker nodes. This workshop uses a compact topology where all nodes serve both roles.
@@ -347,7 +350,7 @@ image::nodes-console-view.png[Nodes Console View, link=self, window=blank]
 
 OpenShift uses **MachineSets** to automate infrastructure scaling. On cloud platforms (AWS, Azure, GCP), MachineSets manage worker nodes across availability zones - you can scale up by changing a replica count rather than manually provisioning machines.
 
-NOTE: When ACM is installed, `machinesets` exists in two API groups (Cluster API and OpenShift Machine API). We use the full resource name `machinesets.machine.openshift.io` to target OpenShift's Machine API.
+NOTE: When Advanced Cluster Management (ACM) is installed, `machinesets` exists in two API groups (Cluster API and OpenShift Machine API). We use the full resource name `machinesets.machine.openshift.io` to target OpenShift's Machine API.
 
 [source,bash,role="execute"]
 ----
@@ -445,7 +448,7 @@ Hundreds of operators ready to install - a mix of Red Hat, certified partner, an
 3. You'll see the unified software catalog with categories on the left:
    - **AI/Machine Learning** - Red Hat OpenShift AI, Open Data Hub
    - **CI/CD** - Red Hat OpenShift GitOps, Red Hat OpenShift Pipelines
-   - **Database** - Red Hat AMQ Streams (Kafka)
+   - **Streaming & Messaging** - Red Hat AMQ Streams (Kafka)
    - **Security** - Red Hat Advanced Cluster Security
    - **Storage** - Red Hat OpenShift Data Foundation
    - **Integration & Delivery** - Red Hat Integration, Red Hat Service Mesh, Red Hat Serverless

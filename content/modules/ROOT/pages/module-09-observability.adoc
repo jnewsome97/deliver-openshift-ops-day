@@ -114,8 +114,8 @@ You can define your own alerts for application namespaces. Here's an example tha
 [source,bash,role="execute"]
 ----
 cat <<EOF | oc apply -f -
-apiVersion: monitoring.openshift.io/v1
-kind: AlertingRule
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
 metadata:
   name: ops-track-alerts
   namespace: openshift-monitoring
@@ -138,7 +138,7 @@ Verify the rule was created:
 
 [source,bash,role="execute"]
 ----
-oc get alertingrule ops-track-alerts -n openshift-monitoring
+oc get prometheusrule ops-track-alerts -n openshift-monitoring
 ----
 
 The rule exists but nothing is triggering it. Let's fix that - deploy a pod that crash-loops so you can see the alert go from inactive to pending to firing:
@@ -188,18 +188,30 @@ In production, that means an overnight incident goes unnoticed until someone che
 
 Deploy Mailpit - a lightweight mail server that catches emails and shows them in a web inbox. This simulates what an internal mail relay does in production:
 
-[source,bash,role="execute"]
+[source,bash,subs="+attributes",role="execute"]
 ----
-bash <(curl -sL https://raw.githubusercontent.com/rhpds/openshift-days-ops-showroom/main/support/09-observability/deploy-mailpit.sh)
+if curl -fsSL --retry 3 --retry-delay 2 -o /tmp/deploy-mailpit.sh {support_base_url}/09-observability/deploy-mailpit.sh; then
+  bash /tmp/deploy-mailpit.sh
+elif curl -fsSL --retry 3 --retry-delay 2 -o /tmp/deploy-mailpit.sh https://raw.githubusercontent.com/rhpds/openshift-days-ops-showroom/dev/support/09-observability/deploy-mailpit.sh; then
+  bash /tmp/deploy-mailpit.sh
+else
+  echo "ERROR: Could not download deploy-mailpit.sh from the Showroom instance or GitHub. Check your network connection and re-run this command."
+fi
 ----
 
 **Configure Alertmanager**
 
 Now configure Alertmanager to send emails through Mailpit. This routes warning alerts to `ops-team@example.com` and critical alerts to `oncall@example.com`:
 
-[source,bash,role="execute"]
+[source,bash,subs="+attributes",role="execute"]
 ----
-bash <(curl -sL https://raw.githubusercontent.com/rhpds/openshift-days-ops-showroom/main/support/09-observability/configure-alertmanager-email.sh)
+if curl -fsSL --retry 3 --retry-delay 2 -o /tmp/configure-alertmanager-email.sh {support_base_url}/09-observability/configure-alertmanager-email.sh; then
+  bash /tmp/configure-alertmanager-email.sh
+elif curl -fsSL --retry 3 --retry-delay 2 -o /tmp/configure-alertmanager-email.sh https://raw.githubusercontent.com/rhpds/openshift-days-ops-showroom/dev/support/09-observability/configure-alertmanager-email.sh; then
+  bash /tmp/configure-alertmanager-email.sh
+else
+  echo "ERROR: Could not download configure-alertmanager-email.sh from the Showroom instance or GitHub. Check your network connection and re-run this command."
+fi
 ----
 
 The script will print the Mailpit inbox URL. Click it or copy it into your browser. Within a minute you should see alert emails arriving:
@@ -212,15 +224,21 @@ Notice the routing:
 
 Click on any email to see the full alert details - alert name, namespace, severity, description, and a link to the Alertmanager UI.
 
-In production, you would replace `mailpit.alert-demo.svc:1025` with your organization's SMTP relay and use real email addresses. Alertmanager also supports Slack, PagerDuty, and webhooks using the same routing structure - see link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html/monitoring/managing-alerts#sending-notifications-to-external-systems_managing-alerts[Sending notifications to external systems, window=blank].
+In production, you would replace `mailpit.alert-demo.svc:1025` with your organization's SMTP relay and use real email addresses. Alertmanager also supports Slack, PagerDuty, and webhooks using the same routing structure - see link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/postinstallation_configuration/configuring-alert-notifications#sending-notifications-to-external-systems_configuring-alert-notifications[Sending notifications to external systems, window=blank].
 
 **Restore Alertmanager**
 
 Reset Alertmanager to its default configuration and clean up:
 
-[source,bash,role="execute"]
+[source,bash,subs="+attributes",role="execute"]
 ----
-bash <(curl -sL https://raw.githubusercontent.com/rhpds/openshift-days-ops-showroom/main/support/09-observability/restore-alertmanager.sh)
+if curl -fsSL --retry 3 --retry-delay 2 -o /tmp/restore-alertmanager.sh {support_base_url}/09-observability/restore-alertmanager.sh; then
+  bash /tmp/restore-alertmanager.sh
+elif curl -fsSL --retry 3 --retry-delay 2 -o /tmp/restore-alertmanager.sh https://raw.githubusercontent.com/rhpds/openshift-days-ops-showroom/dev/support/09-observability/restore-alertmanager.sh; then
+  bash /tmp/restore-alertmanager.sh
+else
+  echo "ERROR: Could not download restore-alertmanager.sh from the Showroom instance or GitHub. Check your network connection and re-run this command."
+fi
 ----
 
 **Takeaway:** An alert that nobody receives is the same as no alert at all. Configuring receivers is one of the first things to do on a new cluster - without it, your monitoring is just decoration.
@@ -247,14 +265,21 @@ Three operators are needed. Each one manages a different part of the pipeline. F
 ----
 oc create namespace openshift-operators-redhat 2>/dev/null || true
 oc create namespace openshift-logging 2>/dev/null || true
-cat <<EOF | oc apply -f -
+
+# Create OperatorGroups only if they don't already exist
+if ! oc get operatorgroup -n openshift-operators-redhat --no-headers 2>/dev/null | grep -q .; then
+  cat <<EOF | oc apply -f -
 apiVersion: operators.coreos.com/v1
 kind: OperatorGroup
 metadata:
   name: openshift-operators-redhat
   namespace: openshift-operators-redhat
 spec: {}
----
+EOF
+fi
+
+if ! oc get operatorgroup -n openshift-logging --no-headers 2>/dev/null | grep -q .; then
+  cat <<EOF | oc apply -f -
 apiVersion: operators.coreos.com/v1
 kind: OperatorGroup
 metadata:
@@ -264,6 +289,7 @@ spec:
   targetNamespaces:
   - openshift-logging
 EOF
+fi
 ----
 
 Install the Loki Operator from the Software Catalog - this is the same process for any operator in OperatorHub.
@@ -287,15 +313,22 @@ image::obs-loki-installing.png[Loki Operator installing confirmation, link=self,
 
 You've seen how OperatorHub works. The remaining operators use the same process - let's script them. This will take a couple of minutes to complete:
 
-[source,bash,role="execute"]
+[source,bash,subs="+attributes",role="execute"]
 ----
-bash <(curl -sL https://raw.githubusercontent.com/rhpds/openshift-days-ops-showroom/main/support/09-observability/install-operators.sh)
+if curl -fsSL --retry 3 --retry-delay 2 -o /tmp/install-operators.sh {support_base_url}/09-observability/install-operators.sh; then
+  bash /tmp/install-operators.sh
+elif curl -fsSL --retry 3 --retry-delay 2 -o /tmp/install-operators.sh https://raw.githubusercontent.com/rhpds/openshift-days-ops-showroom/dev/support/09-observability/install-operators.sh; then
+  bash /tmp/install-operators.sh
+else
+  echo "ERROR: Could not download install-operators.sh from the Showroom instance or GitHub. Check your network connection and re-run this command."
+fi
 ----
 
 Verify all operators are installed:
 
 [source,bash,role="execute"]
 ----
+oc get csv -n openshift-operators-redhat --no-headers | grep -i loki && \
 oc get csv -n openshift-logging --no-headers | grep -i logging && \
 oc get csv -n openshift-operators --no-headers | grep -iE 'tempo|opentelemetry|observability'
 ----
@@ -329,9 +362,15 @@ oc wait --for=jsonpath='{.status.phase}'=Bound obc/loki-bucket -n openshift-logg
 
 Now extract the S3 credentials, create the CA cert ConfigMap, and deploy the LokiStack - all in one block so the variables stay in scope:
 
-[source,bash,role="execute"]
+[source,bash,subs="+attributes",role="execute"]
 ----
-bash <(curl -sL https://raw.githubusercontent.com/rhpds/openshift-days-ops-showroom/main/support/09-observability/setup-loki-storage.sh)
+if curl -fsSL --retry 3 --retry-delay 2 -o /tmp/setup-loki-storage.sh {support_base_url}/09-observability/setup-loki-storage.sh; then
+  bash /tmp/setup-loki-storage.sh
+elif curl -fsSL --retry 3 --retry-delay 2 -o /tmp/setup-loki-storage.sh https://raw.githubusercontent.com/rhpds/openshift-days-ops-showroom/dev/support/09-observability/setup-loki-storage.sh; then
+  bash /tmp/setup-loki-storage.sh
+else
+  echo "ERROR: Could not download setup-loki-storage.sh from the Showroom instance or GitHub. Check your network connection and re-run this command."
+fi
 ----
 
 === Set Up Log Collection
@@ -364,9 +403,15 @@ echo "CA bundle ready"
 
 Create the ClusterLogForwarder - this defines the pipeline:
 
-[source,bash,role="execute"]
+[source,bash,subs="+attributes",role="execute"]
 ----
-bash <(curl -sL https://raw.githubusercontent.com/rhpds/openshift-days-ops-showroom/main/support/09-observability/setup-log-forwarding.sh)
+if curl -fsSL --retry 3 --retry-delay 2 -o /tmp/setup-log-forwarding.sh {support_base_url}/09-observability/setup-log-forwarding.sh; then
+  bash /tmp/setup-log-forwarding.sh
+elif curl -fsSL --retry 3 --retry-delay 2 -o /tmp/setup-log-forwarding.sh https://raw.githubusercontent.com/rhpds/openshift-days-ops-showroom/dev/support/09-observability/setup-log-forwarding.sh; then
+  bash /tmp/setup-log-forwarding.sh
+else
+  echo "ERROR: Could not download setup-log-forwarding.sh from the Showroom instance or GitHub. Check your network connection and re-run this command."
+fi
 ----
 
 === Enable the Logging UI
@@ -437,6 +482,11 @@ image::histogram.png[Log histogram, link=self, window=blank]
 It may take 1-2 minutes for logs to start appearing after the collector pods are running. If you see "No datapoints found", wait a moment and refresh.
 ====
 
+[TIP]
+====
+If the severity histogram stops showing colour-coded levels after switching between log types, refresh the page (F5 or Ctrl+R) to restore it.
+====
+
 == OpenTelemetry for Distributed Tracing
 
 Metrics tell you *what* is happening. Logs tell you *why*. **Traces** tell you *where* - when a request crosses multiple microservices, traces show the exact path and timing across every service. If a user reports "checkout is slow", a trace shows you: frontend (2ms) → API gateway (5ms) → inventory service (800ms) → payment (3ms) - so you instantly see inventory is the bottleneck.
@@ -497,18 +547,30 @@ oc get pods -n tracing-system -l app.kubernetes.io/component=tempo
 
 The tracing pipeline needs two sets of permissions: the collector needs write access to push traces, and users need read access to query them.
 
-[source,bash,role="execute"]
+[source,bash,subs="+attributes",role="execute"]
 ----
-bash <(curl -sL https://raw.githubusercontent.com/rhpds/openshift-days-ops-showroom/main/support/09-observability/setup-tracing-rbac.sh)
+if curl -fsSL --retry 3 --retry-delay 2 -o /tmp/setup-tracing-rbac.sh {support_base_url}/09-observability/setup-tracing-rbac.sh; then
+  bash /tmp/setup-tracing-rbac.sh
+elif curl -fsSL --retry 3 --retry-delay 2 -o /tmp/setup-tracing-rbac.sh https://raw.githubusercontent.com/rhpds/openshift-days-ops-showroom/dev/support/09-observability/setup-tracing-rbac.sh; then
+  bash /tmp/setup-tracing-rbac.sh
+else
+  echo "ERROR: Could not download setup-tracing-rbac.sh from the Showroom instance or GitHub. Check your network connection and re-run this command."
+fi
 ----
 
 === Deploy the OpenTelemetry Collector
 
 The collector is the central receiving station for trace data. Apps send traces to the collector, and the collector forwards them to Tempo for storage. Think of it like Vector for logs - a pipeline component that sits between producers and storage.
 
-[source,bash,role="execute"]
+[source,bash,subs="+attributes",role="execute"]
 ----
-bash <(curl -sL https://raw.githubusercontent.com/rhpds/openshift-days-ops-showroom/main/support/09-observability/setup-otel-collector.sh)
+if curl -fsSL --retry 3 --retry-delay 2 -o /tmp/setup-otel-collector.sh {support_base_url}/09-observability/setup-otel-collector.sh; then
+  bash /tmp/setup-otel-collector.sh
+elif curl -fsSL --retry 3 --retry-delay 2 -o /tmp/setup-otel-collector.sh https://raw.githubusercontent.com/rhpds/openshift-days-ops-showroom/dev/support/09-observability/setup-otel-collector.sh; then
+  bash /tmp/setup-otel-collector.sh
+else
+  echo "ERROR: Could not download setup-otel-collector.sh from the Showroom instance or GitHub. Check your network connection and re-run this command."
+fi
 ----
 
 This collector:
@@ -600,9 +662,15 @@ The collector is now ready for production use. Developers point their apps at `o
 
 Remove the observability resources you deployed. The Prometheus monitoring stack is built-in and doesn't need cleanup.
 
-[source,bash,role="execute"]
+[source,bash,subs="+attributes",role="execute"]
 ----
-bash <(curl -sL https://raw.githubusercontent.com/rhpds/openshift-days-ops-showroom/main/support/cleanup-scripts/cleanup-observability.sh)
+if curl -fsSL --retry 3 --retry-delay 2 -o /tmp/cleanup-observability.sh {support_base_url}/cleanup-scripts/cleanup-observability.sh; then
+  bash /tmp/cleanup-observability.sh
+elif curl -fsSL --retry 3 --retry-delay 2 -o /tmp/cleanup-observability.sh https://raw.githubusercontent.com/rhpds/openshift-days-ops-showroom/dev/support/cleanup-scripts/cleanup-observability.sh; then
+  bash /tmp/cleanup-observability.sh
+else
+  echo "ERROR: Could not download cleanup-observability.sh from the Showroom instance or GitHub. Check your network connection and re-run this command."
+fi
 ----
 
 === Summary
@@ -610,7 +678,7 @@ bash <(curl -sL https://raw.githubusercontent.com/rhpds/openshift-days-ops-showr
 **What you learned:**
 
 * OpenShift's built-in Prometheus stack provides metrics and dashboards with no setup
-* How to create custom alerting rules with AlertingRule and configure email notifications
+* How to create custom alerting rules with PrometheusRule and configure email notifications
 * How to install and configure the full logging stack (Loki + Vector)
 * How to view and filter logs in the OpenShift console
 * How to deploy the OpenTelemetry tracing pipeline (Tempo + OTel Collector)
@@ -647,8 +715,8 @@ oc get tempomonolithic -n tracing-system
 
 === Additional Resources
 
-* **OpenShift Monitoring:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/monitoring/index[Monitoring, window=blank]
-* **OpenShift Logging Documentation:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/logging/index[Logging, window=blank]
-* **Logging 6.2 Stack:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/logging/logging-6-2[Logging 6.2, window=blank]
-* **OpenShift Distributed Tracing:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/distributed_tracing/index[Distributed Tracing, window=blank]
+* **OpenShift Monitoring:** link:https://docs.redhat.com/en/documentation/monitoring_stack_for_red_hat_openshift/4.22/html/about_monitoring/index[Monitoring, window=blank]
+* **OpenShift Logging Documentation:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/logging/index[Logging, window=blank]
+* **Logging 6.6 Stack:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/logging/about-logging[Logging 6.6, window=blank]
+* **OpenShift Distributed Tracing:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/distributed_tracing/index[Distributed Tracing, window=blank]
 * **Red Hat build of OpenTelemetry:** link:https://docs.redhat.com/en/documentation/red_hat_build_of_opentelemetry/[OpenTelemetry, window=blank]
