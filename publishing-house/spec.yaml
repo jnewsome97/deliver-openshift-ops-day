@@ -38,63 +38,63 @@ spec:
     - id: module-01
       title: "Installation & Verification"
       duration_min: 10
-      status: not_started
+      status: complete
     - id: module-02
       title: "Application Management"
       duration_min: 17
-      status: not_started
+      status: complete
     - id: module-03
       title: "Ingress & Load Balancing"
       duration_min: 25
-      status: not_started
+      status: complete
     - id: module-04
       title: "Network Security"
       duration_min: 12
-      status: not_started
+      status: complete
     - id: module-05
       title: "Debugging & Troubleshooting"
       duration_min: 12
-      status: not_started
+      status: complete
     - id: module-06
       title: "GitOps"
       duration_min: 12
-      status: not_started
+      status: complete
     - id: module-07
       title: "Identity - LDAP"
       duration_min: 17
-      status: not_started
+      status: complete
     - id: module-08
       title: "Identity - OIDC"
       duration_min: 17
-      status: not_started
+      status: complete
     - id: module-09
       title: "Observability & Logging"
       duration_min: 37
-      status: not_started
+      status: complete
     - id: module-10
       title: "Performance Tuning"
       duration_min: 17
-      status: not_started
+      status: complete
     - id: module-11
       title: "Virtualization"
       duration_min: 22
-      status: not_started
+      status: complete
     - id: module-12
       title: "Developer Hub"
       duration_min: 27
-      status: not_started
+      status: complete
     - id: module-13
       title: "Lightspeed"
       duration_min: 17
-      status: not_started
+      status: complete
     - id: module-14
       title: "ACM Multi-Cluster Management"
       duration_min: 30
-      status: not_started
+      status: complete
     - id: module-15
       title: "Advanced Cluster Security"
       duration_min: 17
-      status: not_started
+      status: complete
     - id: module-16
       title: "Secrets Management"
       duration_min: 25
@@ -102,7 +102,7 @@ spec:
     - id: module-17
       title: "Zero-Trust Workload Identity Manager"
       duration_min: 20
-      status: not_started
+      status: complete
   environment:
     platform: "ocp"
     topology: "per-student"
