@@ -451,7 +451,7 @@ Remove the resources you created in this module (the EMEA hosted cluster, lab VM
 ----
 if curl -fsSL --retry 3 --retry-delay 2 -o /tmp/cleanup-acm.sh {support_base_url}/cleanup-scripts/cleanup-acm.sh; then
   bash /tmp/cleanup-acm.sh
-elif curl -fsSL --retry 3 --retry-delay 2 -o /tmp/cleanup-acm.sh https://raw.githubusercontent.com/rhpds/openshift-days-ops-showroom/dev/support/cleanup-scripts/cleanup-acm.sh; then
+elif curl -fsSL --retry 3 --retry-delay 2 -o /tmp/cleanup-acm.sh https://raw.githubusercontent.com/rhpds/deliver-openshift-ops-day/main/support/cleanup-scripts/cleanup-acm.sh; then
   bash /tmp/cleanup-acm.sh
 else
   echo "ERROR: Could not download cleanup-acm.sh from the Showroom instance or GitHub. Check your network connection and re-run this command."
