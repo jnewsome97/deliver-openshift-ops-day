@@ -98,7 +98,7 @@ spec:
     - id: module-16
       title: "Secrets Management"
       duration_min: 25
-      status: not_started
+      status: complete
     - id: module-17
       title: "Zero-Trust Workload Identity Manager"
       duration_min: 20
