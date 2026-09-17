@@ -32,31 +32,33 @@ output:
   dir: ./www
 
 # Module attributes for ifeval conditionals in nav.adoc
-# In production, these are injected by the showroom workload via user_data
-# For local preview, enable all modules by setting to "true"
+# Soft-set ('true@') so user_data values merged into antora.yml by the
+# antora-builder init container can override per-deployment. Local preview
+# still shows all modules by default since antora.yml has no module_enable_*
+# overrides.
 asciidoc:
   attributes:
     toclevels: 2
     # Module flags - matches catalog parameter names (module_enable_*)
     # Getting Started
-    module_enable_install: 'true'
+    module_enable_install: 'true@'
     # Core Operations
-    module_enable_appmgmt: 'true'
-    module_enable_ingress: 'true'
-    module_enable_netsec: 'true'
-    module_enable_debugging: 'true'
-    module_enable_gitops: 'true'
+    module_enable_appmgmt: 'true@'
+    module_enable_ingress: 'true@'
+    module_enable_netsec: 'true@'
+    module_enable_debugging: 'true@'
+    module_enable_gitops: 'true@'
     # Identity & Access
-    module_enable_ldap: 'true'
-    module_enable_oidc: 'true'
+    module_enable_ldap: 'true@'
+    module_enable_oidc: 'true@'
     # Day 2 Operations
-    module_enable_observability: 'true'
-    module_enable_performance: 'true'
+    module_enable_observability: 'true@'
+    module_enable_performance: 'true@'
     # Advanced Topics
-    module_enable_virt: 'true'
-    module_enable_devhub: 'true'
-    module_enable_ols: 'true'
-    module_enable_acm: 'true'
-    module_enable_security: 'true'
-    module_enable_ztwim: 'true'
-    module_enable_vault: 'true'
+    module_enable_virt: 'true@'
+    module_enable_devhub: 'true@'
+    module_enable_ols: 'true@'
+    module_enable_acm: 'true@'
+    module_enable_security: 'true@'
+    module_enable_ztwim: 'true@'
+    module_enable_vault: 'true@'
