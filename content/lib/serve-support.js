@@ -4,7 +4,8 @@
 // output dir so the showroom content server serves it at /support/...
 // This lets ui-config's support_base_url point to the live showroom URL instead
 // of falling back to GitHub every time.
-module.exports.register = function ({ on }) {
+module.exports.register = function () {
+  const on = this.on.bind(this)
   on('sitePublished', ({ playbook }) => {
     const { symlinkSync, existsSync } = require('fs')
     const { join, resolve } = require('path')
