@@ -48,9 +48,9 @@ First, create the namespace and deploy the intentionally broken applications:
 [source,bash,subs="+attributes",role="execute"]
 ----
 if curl -fsSL --retry 3 --retry-delay 2 -o /tmp/deploy-broken-apps.sh {support_base_url}/05-debugging/deploy-broken-apps.sh; then
-  bash /tmp/deploy-broken-apps.sh
+  SUPPORT_BASE_URL="{support_base_url}" bash /tmp/deploy-broken-apps.sh
 elif curl -fsSL --retry 3 --retry-delay 2 -o /tmp/deploy-broken-apps.sh https://raw.githubusercontent.com/rhpds/deliver-openshift-ops-day/main/support/05-debugging/deploy-broken-apps.sh; then
-  bash /tmp/deploy-broken-apps.sh
+  SUPPORT_BASE_URL="https://raw.githubusercontent.com/rhpds/deliver-openshift-ops-day/main/support" bash /tmp/deploy-broken-apps.sh
 else
   echo "ERROR: Could not download deploy-broken-apps.sh from the Showroom instance or GitHub. Check your network connection and re-run this command."
 fi
