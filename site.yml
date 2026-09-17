@@ -27,6 +27,7 @@ antora:
   extensions:
     - require: ./content/lib/dev-mode.js
       enabled: false
+    - require: ./content/lib/serve-support.js
 
 output:
   dir: ./www

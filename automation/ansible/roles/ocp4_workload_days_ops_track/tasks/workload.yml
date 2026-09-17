@@ -1606,6 +1606,7 @@
   agnosticd.core.agnosticd_user_info:
     data:
       showroom_url: "https://{{ Route.resources[0].spec.host }}"
+      support_base_url: "https://{{ Route.resources[0].spec.host }}/support"
       openshift_cluster_console_url: "{{ master_url }}"
       openshift_api_server_url: "{{ api_url }}"
       openshift_cluster_admin_password: "{{ common_admin_password | default('not-set') }}"
