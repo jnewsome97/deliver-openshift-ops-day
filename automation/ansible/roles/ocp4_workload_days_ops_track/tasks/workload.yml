@@ -1507,7 +1507,7 @@
 - name: Rebuild Antora site with injected variables
   shell: |
     oc exec deployment/showroom -n {{ showroom_namespace }} -c content -- bash -c '
-    cd /showroom/repo && npx antora site.yml'
+    cd /showroom/repo && /opt/app-root/src/.npm-global/bin/antora --cache-dir=/tmp/.cache/antora site.yml'
   register: antora_build_result
   when: enable_workshop_cli_tools | default(true) | bool
 
@@ -1521,7 +1521,7 @@
     oc exec deployment/showroom -n {{ showroom_namespace }} -c content -- sh -c '
     cp /showroom/www/index.html /tmp/showroom-root-index-backup.html
     cp /showroom/www/ui-config.yml /tmp/showroom-ui-config-backup.yml 2>/dev/null
-    cp -r /showroom/repo/public/* /showroom/www/
+    cp -r /showroom/repo/www/* /showroom/www/
     cp /tmp/showroom-root-index-backup.html /showroom/www/index.html
     cp /tmp/showroom-ui-config-backup.yml /showroom/www/ui-config.yml 2>/dev/null
     echo "Copied Antora output while preserving showroom panel app"'
