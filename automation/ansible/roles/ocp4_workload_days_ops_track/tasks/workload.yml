@@ -1361,7 +1361,7 @@
     fi
     echo ""
     echo "--- Expected containers exist? ---"
-    for CNAME in nginx content wetty; do
+    for CNAME in content runner wetty; do
       FOUND=$(oc get deployment showroom -n {{ showroom_namespace }} \
         -o jsonpath="{.spec.template.spec.containers[?(@.name==\"$CNAME\")].name}" 2>/dev/null)
       if [ "$FOUND" = "$CNAME" ]; then
@@ -1384,9 +1384,11 @@
 
 # ==============================================================================
 # Patch Showroom deployment - single strategic merge patch by container name
-# This is resilient to container order changes in the showroom deployer
+# This is resilient to container order changes in the showroom deployer.
+# Container names (content/runner/wetty) match the current showroom chart's
+# traefik-based layout - update this list if the chart's containers change.
 # ==============================================================================
-- name: Patch Showroom deployment (env vars, volumes, mounts) in a single patch
+- name: Patch Showroom deployment (env vars) in a single patch
   kubernetes.core.k8s:
     state: patched
     definition:
@@ -1398,16 +1400,7 @@
       spec:
         template:
           spec:
-            volumes:
-            - name: antora-cache
-              emptyDir: {}
-            - name: npm-cache
-              emptyDir: {}
             containers:
-            - name: nginx
-              envFrom:
-              - configMapRef:
-                  name: workshop-vars
             - name: content
               envFrom:
               - configMapRef:
@@ -1417,19 +1410,14 @@
                   memory: 512Mi
                 requests:
                   memory: 256Mi
-              volumeMounts:
-              - name: antora-cache
-                mountPath: /opt/app-root/src/.cache
-              - name: npm-cache
-                mountPath: /opt/app-root/src/.npm
+            - name: runner
+              envFrom:
+              - configMapRef:
+                  name: workshop-vars
             - name: wetty
               envFrom:
               - configMapRef:
                   name: workshop-vars
-              volumeMounts:
-              - name: showroom-files
-                mountPath: /showroom
-                readOnly: true
 
 - name: DEBUG - Showroom Deployment structure after patching
   shell: |
@@ -1442,7 +1430,7 @@
     for c in d['spec']['template']['spec'].get('containers',[]):
         print(f\"container: {c['name']}  image: {c.get('image','N/A')}  mem_limit: {c.get('resources',{}).get('limits',{}).get('memory','unset')}\")" 2>&1 || true
     echo ""
-    echo "=== VOLUMES (should include originals + antora-cache + npm-cache) ==="
+    echo "=== VOLUMES (should be unchanged from pre-patch) ==="
     oc get deployment showroom -n $NS \
       -o jsonpath='{range .spec.template.spec.volumes[*]}volume: {.name}{"\n"}{end}' 2>&1 || true
     echo ""
@@ -1456,7 +1444,7 @@
             ro = ' [readOnly]' if m.get('readOnly') else ''
             print(f\"  mount: {m['name']} -> {m['mountPath']}{sp}{ro}\")" 2>&1 || true
     echo ""
-    echo "=== ENVFROM (should show workshop-vars on nginx, content, wetty) ==="
+    echo "=== ENVFROM (should show workshop-vars on content, runner, wetty) ==="
     oc get deployment showroom -n $NS -o json | python3 -c "
     import json,sys; d=json.load(sys.stdin)
     for c in d['spec']['template']['spec'].get('containers',[]):
