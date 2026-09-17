@@ -8,10 +8,6 @@ view_switcher:
   enabled: true
   default_mode: split
 
-antora:
-  name: openshift-days-ops-track
-  version: main
-
 tabs:
   - name: OCP Console
     url: 'https://console-openshift-console.${DOMAIN}'
