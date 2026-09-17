@@ -11,8 +11,10 @@ content:
 
 ui:
   bundle:
+    # snapshot: false (default) - the release tag is version-pinned (v4), so treat
+    # the bundle as immutable and let Antora reuse the cached copy on rebuilds
+    # instead of re-fetching it from GitHub on every invocation.
     url: https://github.com/jnewsome97/rhdp_showroom_theme_execute/releases/download/rh-one-2025-execute-v4/ui-bundle.zip
-    snapshot: true
   supplemental_files:
     - path: ./content/supplemental-ui
     - path: ./content/lib
