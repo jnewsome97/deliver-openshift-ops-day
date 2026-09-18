@@ -1519,6 +1519,18 @@
     msg: "{{ antora_build_result.stdout_lines | default([]) }}"
   when: enable_workshop_cli_tools | default(true) | bool
 
+- name: Wait for the API and control plane to be stable before updating Showroom
+  shell: |
+    available=$(oc get co kube-apiserver -o jsonpath='{.status.conditions[?(@.type=="Available")].status}') || exit 1
+    progressing=$(oc get co kube-apiserver -o jsonpath='{.status.conditions[?(@.type=="Progressing")].status}') || exit 1
+    degraded=$(oc get co kube-apiserver -o jsonpath='{.status.conditions[?(@.type=="Degraded")].status}') || exit 1
+    test "$available" = "True" && test "$progressing" = "False" && test "$degraded" = "False"
+  register: api_stable_result
+  retries: 20
+  delay: 15
+  until: api_stable_result.rc == 0
+  when: enable_workshop_cli_tools | default(true) | bool
+
 - name: Copy built site to served location (preserve showroom panel app)
   shell: |
     oc exec deployment/showroom -n {{ showroom_namespace }} -c content -- sh -c '
@@ -1529,6 +1541,9 @@
     cp /tmp/showroom-ui-config-backup.yml /showroom/www/ui-config.yml 2>/dev/null
     echo "Copied Antora output while preserving showroom panel app"'
   register: copy_site_result
+  retries: 5
+  delay: 15
+  until: copy_site_result.rc == 0
   when: enable_workshop_cli_tools | default(true) | bool
 
 - name: Resolve DOMAIN variable in ui-config.yml
