@@ -1658,6 +1658,79 @@
         msg: "Faulty pod deployed to lightspeed-demo namespace for Lightspeed troubleshooting exercise"
       when: not silent | default(false) | bool
 
+# ==============================================================================
+# Pre-create Observability UIPlugin CRs
+# COO watches UIPlugin CRs and creates ConsolePlugins, each of which triggers
+# a full console rolling restart. Pre-creating them here means the rollout
+# happens at provisioning time (no student browser connected) rather than
+# during the lab session when it crashes the showroom renderer.
+# Students' oc apply commands become no-ops — no rollout, no crash.
+# ignore_errors: true — non-blocking until this is fully validated
+# ==============================================================================
+
+- name: Pre-create observability UIPlugin CRs to prevent console rollout during lab
+  when: module_enable_observability | default(true) | bool
+  ignore_errors: true
+  block:
+    - name: Install Cluster Observability Operator subscription
+      shell: |
+        cat <<'EOF' | oc apply -f -
+        apiVersion: operators.coreos.com/v1alpha1
+        kind: Subscription
+        metadata:
+          name: cluster-observability-operator
+          namespace: openshift-operators
+        spec:
+          channel: stable
+          installPlanApproval: Automatic
+          name: cluster-observability-operator
+          source: redhat-operators
+          sourceNamespace: openshift-marketplace
+        EOF
+
+    - name: Wait for COO CSV to succeed
+      shell: |
+        oc get csv -n openshift-operators --no-headers 2>/dev/null | \
+          grep cluster-observability-operator | grep -q Succeeded
+      register: coo_csv_result
+      until: coo_csv_result.rc == 0
+      retries: 30
+      delay: 10
+
+    - name: Wait for UIPlugin CRD to be established
+      shell: |
+        oc wait --for=condition=Established \
+          crd/uiplugins.observability.openshift.io --timeout=30s
+
+    - name: Pre-create logging UIPlugin
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: observability.openshift.io/v1alpha1
+          kind: UIPlugin
+          metadata:
+            name: logging
+          spec:
+            type: Logging
+            logging:
+              lokiStack:
+                name: logging-loki
+
+    - name: Pre-create distributed-tracing UIPlugin
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: observability.openshift.io/v1alpha1
+          kind: UIPlugin
+          metadata:
+            name: distributed-tracing
+          spec:
+            type: DistributedTracing
+
+    - name: Wait for console to finish rolling out after UIPlugin pre-creation
+      shell: |
+        oc rollout status deployment/console -n openshift-console --timeout=180s
+
 # Leave this as the last task in the playbook.
 
 - name: workload tasks complete
