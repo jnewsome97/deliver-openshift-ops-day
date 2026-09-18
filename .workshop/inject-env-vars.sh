@@ -174,6 +174,7 @@ default_width: 30
 persist_url_state: true
 
 antora:
+  modules: []
   name: openshift-days-ops-track
   version: main
 
