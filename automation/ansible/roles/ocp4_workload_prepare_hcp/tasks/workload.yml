@@ -1,0 +1,69 @@
+---
+- name: Create namespace
+  kubernetes.core.k8s:
+    state: present
+    api_version: v1
+    kind: Namespace
+    name: "{{ ocp4_workload_prepare_hcp_secret_namespace }}"
+
+- name: Retrieve pull-secret from openshift-config namespace
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Secret
+    name: pull-secret
+    namespace: openshift-config
+  register: r_pull_secret
+
+- name: Extract .dockerconfigjson from pull-secret
+  ansible.builtin.set_fact:
+    pull_secret_json: "{{ r_pull_secret.resources[0].data['.dockerconfigjson'] | b64decode }}"
+
+- name: Create secret on RHACM (copy of pull-secret)
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: "{{ ocp4_workload_prepare_hcp_secret_name }}"
+        namespace: "{{ ocp4_workload_prepare_hcp_secret_namespace }}"
+        labels:
+          cluster.open-cluster-management.io/credentials: ""
+          cluster.open-cluster-management.io/type: kubevirt
+      type: Opaque
+      stringData:
+        pullSecret: "{{ pull_secret_json }}"
+  retries: 10
+  delay: 10
+
+- name: Create policies namespace
+  kubernetes.core.k8s:
+    state: present
+    api_version: v1
+    kind: Namespace
+    name: "{{ ocp4_workload_prepare_hcp_policy_namespace }}"
+
+- name: Create ManagedClusterSet and policy
+  kubernetes.core.k8s:
+    state: present
+    template: "{{ item }}"
+  loop:
+  - managedclusterset.yaml.j2
+  - managedclustersetbinding.yaml.j2
+  - policy_gitops.yaml.j2
+  - placement_gitops.yaml.j2
+  - placementbinding_gitops.yaml.j2
+  - policy_compliance.yaml.j2
+  - placement_compliance.yaml.j2
+  - placementbinding_compliance.yaml.j2
+
+- name: Create Autoshift ApplicationSet
+  kubernetes.core.k8s:
+    state: present
+    template: applicationset_autoshift.yaml.j2
+  
+- name: Save user information
+  agnosticd.core.agnosticd_user_info:
+    data:
+      hcp_secret: "{{ ocp4_workload_prepare_hcp_secret_name }}"
+      hcp_secret_namespace: "{{ ocp4_workload_prepare_hcp_secret_namespace }}"

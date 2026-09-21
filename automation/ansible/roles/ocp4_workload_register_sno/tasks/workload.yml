@@ -1,0 +1,72 @@
+---
+- name: Set up ManagedCluster Resource on RHACM
+  kubernetes.core.k8s:
+    host: "{{ ocp4_workload_register_sno_rhacm_openshift_api_url }}"
+    api_key: "{{ ocp4_workload_register_sno_rhacm_openshift_api_token }}"
+    validate_certs: false
+    state: present
+    template: managedcluster.yaml.j2
+
+- name: Wait for import manifest to be available 
+  kubernetes.core.k8s_info:
+    host: "{{ ocp4_workload_register_sno_rhacm_openshift_api_url }}"
+    api_key: "{{ ocp4_workload_register_sno_rhacm_openshift_api_token }}"
+    validate_certs: false
+    api_version: v1
+    kind: Secret
+    name: "{{ ocp4_workload_register_sno_cluster_name }}-import"
+    namespace: "{{ ocp4_workload_register_sno_cluster_name }}"
+  register: r_import_secret
+  retries: 30
+  delay: 5
+  until:
+  - r_import_secret.resources | length > 0
+  - r_import_secret.resources[0].data is defined
+  - r_import_secret.resources[0].data['import.yaml'] is defined
+
+- name: Extract and decode import manifest from secret
+  ansible.builtin.set_fact:
+    _ocp4_workload_register_sno_import_manifest: "{{ r_import_secret.resources[0].data['import.yaml'] | b64decode }}"
+
+- name: Create Klusterlet CRD on target cluster
+  kubernetes.core.k8s:
+    host: "{{ ocp4_workload_register_sno_aws_openshift_api_url }}"
+    api_key: "{{ ocp4_workload_register_sno_aws_openshift_api_token }}"
+    validate_certs: false
+    state: present
+    src: klusterlet-crd.yaml
+
+- name: Apply all import resources to target cluster
+  kubernetes.core.k8s:
+    host: "{{ ocp4_workload_register_sno_aws_openshift_api_url }}"
+    api_key: "{{ ocp4_workload_register_sno_aws_openshift_api_token }}"
+    validate_certs: false
+    state: present
+    definition: "{{ _ocp4_workload_register_sno_import_manifest }}"
+    apply: true
+
+- name: Enable policy addons for managed cluster
+  kubernetes.core.k8s:
+    host: "{{ ocp4_workload_register_sno_rhacm_openshift_api_url }}"
+    api_key: "{{ ocp4_workload_register_sno_rhacm_openshift_api_token }}"
+    validate_certs: false
+    state: present
+    template: managedclusteraddons-policy.yaml.j2
+
+- name: Pass through user information about the AWS cluster
+  agnosticd.core.agnosticd_user_info:
+    data:
+      aws_region: "{{ aws_sno_provision_data.aws_region }}"
+      aws_bastion_public_hostname: "{{ aws_sno_provision_data.bastion_public_hostname }}"
+      aws_bastion_ssh_password: "{{ aws_sno_provision_data.bastion_ssh_password }}"
+      aws_bastion_ssh_user_name: "{{ aws_sno_provision_data.bastion_ssh_user_name }}"
+      aws_openshift_api_ca_cert: "{{ aws_sno_provision_data.openshift_api_ca_cert }}"
+      aws_openshift_api_url: "{{ aws_sno_provision_data.openshift_api_url }}"
+      aws_openshift_cluster_admin_token: "{{ aws_sno_provision_data.openshift_cluster_admin_token }}"
+      aws_openshift_cluster_ingress_domain: "{{ aws_sno_provision_data.openshift_cluster_ingress_domain }}"
+      aws_openshift_console_url: "{{ aws_sno_provision_data.openshift_console_url }}"
+      aws_openshift_kubeadmin_password: "{{ aws_sno_provision_data.openshift_kubeadmin_password }}"
+      cnv_bastion_public_hostname: "{{ bastion_ansible_host }}"
+      cnv_bastion_ssh_password: "{{ bastion_ansible_ssh_pass }}"
+      cnv_bastion_ssh_user_name: "{{ bastion_ansible_user }}"
+      cnv_bastion_ssh_port: "{{ bastion_ansible_port }}"
