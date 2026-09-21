@@ -44,8 +44,3 @@ ocp4_workload_prepare_hcp_compliance_operator_clustersets:
 
 # Labels to target with Placement
 ocp4_workload_prepare_hcp_compliance_operator_placement_labels: []
-
-# ------------------------------------------------
-# ApplicationSet for Autoshift
-# ------------------------------------------------
-ocp4_workload_prepare_hcp_autoshift_version: "0.0.4"
