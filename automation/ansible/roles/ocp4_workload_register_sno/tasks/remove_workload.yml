@@ -1,0 +1,4 @@
+---
+- name: Unregister SNO cluster on RHACM
+  ansible.builtin.debug:
+    msg: "Unregistering the SNO cluster on RHACM is not implemented."
