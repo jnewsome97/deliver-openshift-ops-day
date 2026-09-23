@@ -1361,7 +1361,7 @@
     fi
     echo ""
     echo "--- Expected containers exist? ---"
-    for CNAME in content runner wetty; do
+    for CNAME in content wetty; do
       FOUND=$(oc get deployment showroom -n {{ showroom_namespace }} \
         -o jsonpath="{.spec.template.spec.containers[?(@.name==\"$CNAME\")].name}" 2>/dev/null)
       if [ "$FOUND" = "$CNAME" ]; then
@@ -1385,8 +1385,9 @@
 # ==============================================================================
 # Patch Showroom deployment - single strategic merge patch by container name
 # This is resilient to container order changes in the showroom deployer.
-# Container names (content/runner/wetty) match the current showroom chart's
-# traefik-based layout - update this list if the chart's containers change.
+# Container names (content/wetty) match the current showroom chart's nginx-based
+# layout. The older traefik-based layout had a 'runner' container — do not add
+# it back or Kubernetes will reject the patch (image field is required).
 # ==============================================================================
 - name: Patch Showroom deployment (env vars) in a single patch
   kubernetes.core.k8s:
@@ -1410,10 +1411,6 @@
                   memory: 512Mi
                 requests:
                   memory: 256Mi
-            - name: runner
-              envFrom:
-              - configMapRef:
-                  name: workshop-vars
             - name: wetty
               envFrom:
               - configMapRef:
@@ -1444,7 +1441,7 @@
             ro = ' [readOnly]' if m.get('readOnly') else ''
             print(f\"  mount: {m['name']} -> {m['mountPath']}{sp}{ro}\")" 2>&1 || true
     echo ""
-    echo "=== ENVFROM (should show workshop-vars on content, runner, wetty) ==="
+    echo "=== ENVFROM (should show workshop-vars on content, wetty) ==="
     oc get deployment showroom -n $NS -o json | python3 -c "
     import json,sys; d=json.load(sys.stdin)
     for c in d['spec']['template']['spec'].get('containers',[]):
