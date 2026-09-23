@@ -289,6 +289,41 @@
     msg: "{{ debug_cnv.stdout_lines }}"
   when: oc_whoami_check.rc == 0
 
+# ==============================================================================
+# CNV boot sources — the upstream agnosticd virt role sets
+# workloadSources.enableCommonBootImageImport: false on CNV+Ceph clusters and
+# does not always patch it back to true. Patch it here so DataImportCrons are
+# created and the rhel9 boot volume is available for module 11 (Virtualization).
+# ==============================================================================
+- name: Ensure HyperConverged boot image import is enabled
+  kubernetes.core.k8s:
+    state: patched
+    api_version: hco.kubevirt.io/v1beta1
+    kind: HyperConverged
+    name: kubevirt-hyperconverged
+    namespace: openshift-cnv
+    definition:
+      spec:
+        workloadSources:
+          enableCommonBootImageImport: true
+  ignore_errors: true
+
+- name: Wait for rhel9 boot source to be Ready
+  kubernetes.core.k8s_info:
+    api_version: cdi.kubevirt.io/v1beta1
+    kind: DataSource
+    name: rhel9
+    namespace: openshift-virtualization-os-images
+  register: r_rhel9_datasource
+  retries: 60
+  delay: 30
+  until: >-
+    r_rhel9_datasource.resources | length > 0 and
+    (r_rhel9_datasource.resources[0].status.conditions |
+     selectattr('type', 'eq', 'Ready') |
+     selectattr('status', 'eq', 'True') | list | length > 0)
+  ignore_errors: true
+
 - name: DEBUG - ACM/Multicluster Engine status
   shell: |
     echo "=== ACM NAMESPACE ==="
