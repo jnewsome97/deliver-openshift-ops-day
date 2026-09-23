@@ -276,9 +276,16 @@ NOTE: You may have noticed **Storage** in the Migration submenu alongside Comput
 
 Need another copy of a VM - for testing, dev environments, or scaling out? Clone it. This creates a full copy of the VM's disk and configuration.
 
-**Step 1: Start the Clone**
+**Step 1: Stop the VM**
 
-. On the **rhel9-vm** details page, click **Actions** -> **Clone**
+Cloning a running VM requires taking a live snapshot first, which is slow and unreliable on this infrastructure. Stop the VM before cloning — OpenShift can then clone the disk directly, which is fast and always works.
+
+. On the **rhel9-vm** details page, click **Actions** -> **Stop**
+. Wait until the status shows **Stopped**
+
+**Step 2: Start the Clone**
+
+. Click **Actions** -> **Clone**
 +
 image::virt-actions-clone.png[Actions dropdown with Clone option highlighted, link=self, window=blank]
 . Change the name to `rhel9-vm-clone`
@@ -286,7 +293,7 @@ image::virt-actions-clone.png[Actions dropdown with Clone option highlighted, li
 . Click **Clone**
 +
 image::virt-clone-config.png[Clone VirtualMachine dialog with name and configuration, link=self, window=blank]
-**Step 2: Verify the Clone**
+**Step 3: Verify the Clone**
 
 Once complete, the console navigates to the clone's details page. You'll see both VMs in the left sidebar:
 

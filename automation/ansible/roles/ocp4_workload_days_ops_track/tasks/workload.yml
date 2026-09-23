@@ -324,6 +324,50 @@
      selectattr('status', 'eq', 'True') | list | length > 0)
   ignore_errors: true
 
+# ==============================================================================
+# CNV Snapshot Fix for External ODF (ODF 4.22 / OCP 4.22)
+#
+# Root cause: csi-snapshotter in the RBD ctrlplugin is compiled against the
+# v1beta2 VolumeGroupSnapshot API, but OCP 4.22 only serves v1. Its informer
+# WaitForCacheSync blocks forever and workers never start — VMSnapshot/VMClone
+# RPCs never reach the CSI driver.
+#
+# Fix: set CSISnapshotController Unmanaged, add v1beta2 as a served (non-stored)
+# version to the three VolumeGroupSnapshot CRDs, then restart the ctrlplugin.
+# Skipped automatically on non-External-ODF clusters (deployment absent).
+# ==============================================================================
+- name: Check if External ODF RBD ctrlplugin is present
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: openshift-storage.rbd.csi.ceph.com-ctrlplugin
+    namespace: openshift-storage
+  register: r_rbd_ctrlplugin
+  ignore_errors: true
+
+- name: Apply CNV snapshot fix for External ODF
+  when: r_rbd_ctrlplugin.resources | default([]) | length > 0
+  block:
+  - name: Copy fix-cnv-snapshots.sh to runner
+    copy:
+      src: fix-cnv-snapshots.sh
+      dest: /tmp/fix-cnv-snapshots.sh
+      mode: '0755'
+
+  - name: Run fix-cnv-snapshots.sh
+    shell: /tmp/fix-cnv-snapshots.sh
+    register: r_cnv_snapshot_fix
+    ignore_errors: true
+
+  - name: Display CNV snapshot fix output
+    debug:
+      msg: "{{ r_cnv_snapshot_fix.stdout_lines | default([]) }}"
+
+  - name: Warn if CNV snapshot fix failed
+    debug:
+      msg: "WARNING: fix-cnv-snapshots.sh failed (rc={{ r_cnv_snapshot_fix.rc }}). VMSnapshot/VMClone may not work. Check logs above."
+    when: r_cnv_snapshot_fix.rc | default(0) != 0
+
 - name: DEBUG - ACM/Multicluster Engine status
   shell: |
     echo "=== ACM NAMESPACE ==="
