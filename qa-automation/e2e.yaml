@@ -1,0 +1,156 @@
+---
+# E2E — End-to-end test
+# Runs all module solve + validate sequences to verify the full lab
+# works from start to finish without manual intervention.
+
+- name: End-to-End Test
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  # Default kubeconfig for every kubernetes.core.k8s*/helm module in this
+  # play to the runtime-automation identity (populated by zerotouch-automation
+  # from the runtime-automation-kubeconfig Secret -- see the
+  # ocp4_workload_showroom_runtime_automation_* variables in
+  # agnosticd/showroom's ocp4_workload_showroom role). Without this, tasks
+  # fall back to the pod's own in-cluster identity, which is `edit`-scoped to
+  # its own namespace only and cannot read resources in
+  # openshift-gitops/monorepo-demo/ansible_test_monorepo.
+  module_defaults:
+    group/kubernetes.core.k8s:
+      kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+  # module_defaults above only reaches kubernetes.core.k8s* modules. The raw
+  # `oc apply` command below needs KUBECONFIG (the CLI's own env var). The
+  # nested `ansible-playbook automation/ansible/playbooks/setup.yml`
+  # subprocess needs K8S_AUTH_KUBECONFIG instead -- its create_namespace/
+  # deploy_busybox roles call kubernetes.core.k8s directly with no
+  # kubeconfig of their own, and that module only honors its own
+  # K8S_AUTH_KUBECONFIG env var, not the generic KUBECONFIG. Set both so
+  # every identity-sensitive call in this play resolves to the
+  # runtime-automation identity instead of falling back to the pod's own
+  # in-cluster identity (edit-scoped to its own namespace).
+  environment:
+    KUBECONFIG: "{{ k8s_kubeconfig | default(omit) }}"
+    K8S_AUTH_KUBECONFIG: "{{ k8s_kubeconfig | default(omit) }}"
+  vars:
+  tasks:
+
+    # -- Module 1: Overview --------------------------------------------------
+
+    - name: "M1 | oc whoami"
+      ansible.builtin.command: oc whoami
+      register: oc_whoami
+      changed_when: false
+      failed_when: oc_whoami.rc != 0
+
+    - name: "M1 | oc get nodes"
+      ansible.builtin.command: oc get nodes
+      register: nodes_r
+      changed_when: false
+      failed_when: nodes_r.rc != 0
+
+    - name: "M1 | oc get clusterversion"
+      ansible.builtin.command: oc get clusterversion
+      register: output_r
+      changed_when: false
+      failed_when: output_r.rc != 0
+
+    - name: "M1 | oc get pods -n openshift-monitoring | grep prometheus"
+      ansible.builtin.shell: oc get pods -n openshift-monitoring | grep prometheus
+      register: output_r
+      changed_when: false
+      failed_when: output_r.rc != 0
+
+    - name: "M1 | get token for prometheus/thanos"
+      ansible.builtin.command: oc whoami -t
+      register: token_r
+
+    - name: "M1 | get route for prometheus/thanos"
+      kubernetes.core.k8s_info:
+        api_version: route.openshift.io/v1
+        kind: Route
+        name: thanos-querier
+        namespace: openshift-monitoring
+      register: route_r
+
+    - name: "M1 | set info for prometheus/thanos"
+      ansible.builtin.set_fact:
+        thanos_host: "{{ route_r.resources[0].status.ingress[0].host }}"
+        thanos_token: "{{ token_r.stdout }}"
+
+    - name: "M1 | query prometheus"
+      vars:
+        promql_query: "sum(rate(container_cpu_usage_seconds_total[5m])) by (namespace)"
+      ansible.builtin.uri:
+        url: https://{{ thanos_host }}/api/v1/query?query={{ promql_query | urlencode }}
+        method: GET
+        headers:
+          Authorization: "Bearer {{ thanos_token }}"
+        return_content: true
+      register: prom_r
+      failed_when: prom_r.status != 200
+
+    - name: "M1 | Delete quick-demo project"
+      kubernetes.core.k8s:
+        state: absent
+        api_version: project.openshift.io/v1
+        kind: Project
+        name: quick-demo
+
+    - name: "M1 | Wait for quick-demo project to be deleted"
+      ansible.builtin.command: oc get project quick-demo
+      register: command_r
+      until: command_r.rc == 1
+      failed_when: false
+      retries: 10
+      delay: 5
+
+    - name: "M1 | Deploy quick-demo project with httpd"
+      ansible.builtin.shell: |
+        oc new-project quick-demo
+        oc new-app --name=hello --image=registry.access.redhat.com/ubi9/httpd-24
+        oc create route edge hello --service=hello
+
+    - name: "M1 | Wait for httpd readiness"
+      ansible.builtin.command: oc wait --for=condition=Available=True -n quick-demo deployment hello --timeout 30s
+      register: command_r
+      until: command_r.rc == 0
+      retries: 3
+
+    # route returns a 503 for another few seconds so add a wait
+    - name: "M1 | Wait an extra 3s for httpd readiness"
+      ansible.builtin.command: sleep 3
+    
+    - name: "M1 | get route for httpd"
+      kubernetes.core.k8s_info:
+        api_version: route.openshift.io/v1
+        kind: Route
+        name: hello
+        namespace: quick-demo
+      register: httpd_route_r
+
+    - name: "M1 | set info for httpd"
+      ansible.builtin.set_fact:
+        httpd_host: "{{ httpd_route_r.resources[0].status.ingress[0].host }}"
+
+    - name: "M1 | GET httpd"
+      ansible.builtin.uri:
+        url: https://{{ httpd_host }}/
+        return_content: true
+      register: httpd_r
+      # httpd is expected to return a 403 out of the box
+      failed_when: httpd_r.status != 403
+
+    - name: "M1 | Delete quick-demo project"
+      kubernetes.core.k8s:
+        state: absent
+        api_version: project.openshift.io/v1
+        kind: Project
+        name: quick-demo
+
+    - name: "M1 | Wait for quick-demo project to be deleted"
+      ansible.builtin.command: oc get project quick-demo
+      register: command_r
+      until: command_r.rc == 1
+      failed_when: false
+      retries: 10
+      delay: 5

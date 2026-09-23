@@ -1,0 +1,65 @@
+---
+# HEALTHCHECK — Quick environment readiness check
+# Runs post-provisioning to verify the lab environment is functional.
+# Should complete in under 60 seconds.
+#
+# Exit 0 = healthy, non-zero = unhealthy.
+
+- name: Environment Health Check
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  # Default kubeconfig for every kubernetes.core.k8s*/helm module in this
+  # play to the runtime-automation identity (populated by zerotouch-automation
+  # from the runtime-automation-kubeconfig Secret -- see the
+  # ocp4_workload_showroom_runtime_automation_* variables in
+  # agnosticd/showroom's ocp4_workload_showroom role). Without this, tasks
+  # fall back to the pod's own in-cluster identity, which is `edit`-scoped to
+  # its own namespace only and cannot read resources like the
+  # openshift-gitops Application below.
+  module_defaults:
+    group/kubernetes.core.k8s:
+      kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+  vars:
+    monorepo_path: /showroom/repo
+  tasks:
+    - name: Monorepo is cloned at expected path
+      ansible.builtin.stat:
+        path: "{{ monorepo_path }}"
+      register: repo_stat
+      failed_when: not repo_stat.stat.exists or not repo_stat.stat.isdir
+
+    - name: Expected top-level directories are present
+      ansible.builtin.stat:
+        path: "{{ monorepo_path }}/{{ item }}"
+      register: dir_stat
+      failed_when: not dir_stat.stat.exists or not dir_stat.stat.isdir
+      loop:
+        - content
+        # - automation/gitops/bootstrap-infra
+        - automation/ansible
+
+    - name: Cluster is reachable and user is logged in
+      ansible.builtin.command: oc whoami
+      register: oc_whoami
+      changed_when: false
+      failed_when: oc_whoami.rc != 0
+
+    - name: Showroom pod is running
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        label_selectors:
+          - app.kubernetes.io/name=showroom
+      register: showroom_pods
+      failed_when: >-
+        showroom_pods.resources | length == 0 or
+        showroom_pods.resources | selectattr('status.phase', 'equalto', 'Running') | list | length == 0
+
+    - name: Subscriptions are installed
+      kubernetes.core.k8s_info:
+        api_version: operators.coreos.com/v1alpha1
+        kind: Subscription
+      register: operator_subscriptions
+      failed_when: >-
+        operator_subscriptions.resources | length == 0
