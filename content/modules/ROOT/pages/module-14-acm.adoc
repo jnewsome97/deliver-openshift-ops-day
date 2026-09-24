@@ -20,7 +20,7 @@ By the end of this module, you will:
 [[multi-env-clusters]]
 == Multi-Environment Red Hat OpenShift Cluster and Virtual Machine Creation and Management
 
-When you control your clusters—from setup to daily operations—you decide where your workloads and data live, set your own policies, and stay compliant. This way, you can quickly adapt to regulations, keep your business flexible, and avoid relying on outside providers. With flexible management of clusters and virtual machines, you can build a cloud that fits your security and compliance needs from the start.
+When you control your clusters-from setup to daily operations-you decide where your workloads and data live, set your own policies, and stay compliant. This way, you can quickly adapt to regulations, keep your business flexible, and avoid relying on outside providers. With flexible management of clusters and virtual machines, you can build a cloud that fits your security and compliance needs from the start.
 
 [[hub-cluster-overview]]
 === RHACM Management Cluster Overview
@@ -126,7 +126,7 @@ NOTE: Deploying this Hosted Control Plane (HCP) cluster will take about 5 to 10 
 
 == Create and Manage Virtual Machines Using the RHACM Console
 
-Red Hat Advanced Cluster Management (RHACM) with OpenShift Virtualization provides unified, policy-as-code driven control of clusters and VMs from a single console. It lets you label resources, enforce placement, and automate compliance—removing the need to jump between different management tools and ensuring consistent controls across all workloads.
+Red Hat Advanced Cluster Management (RHACM) with OpenShift Virtualization provides unified, policy-as-code driven control of clusters and VMs from a single console. It lets you label resources, enforce placement, and automate compliance-removing the need to jump between different management tools and ensuring consistent controls across all workloads.
 
 By the end of this exercise, you will:
 
@@ -182,7 +182,7 @@ image::12-vm-finish.png[link=self, window=blank, width=100%, Create VM]
 
 [TIP]
 ====
-*UI or GitOps—The Choice is Yours!*
+*UI or GitOps-The Choice is Yours!*
 
 While this lab demonstrates the graphical capabilities of the RHACM console, Virtual Machines in OpenShift are fundamentally Kubernetes objects. You can define your VMs as code using YAML and deploy them using Red Hat OpenShift GitOps (ArgoCD). RHACM supports both workflows: use the UI for quick administration and discovery, or use GitOps for a fully declarative, audit-ready production pipeline. In cloud environments, GitOps workflows provide version-controlled infrastructure that meets compliance requirements and audit trails for regulatory demonstrations.
 ====
@@ -196,7 +196,7 @@ There are two main ways clusters get updates from Git:
 - In pull mode, each cluster gets its own updates, making things more secure and keeping everything within specific regions.
 - In push mode, a central tool sends updates out to clusters.
 
-For this lab, you’ll use the push model (with Argo CD already set up), so you can see how easy it is to deploy and manage apps with GitOps—even across multiple clusters in different locations.
+For this lab, you’ll use the push model (with Argo CD already set up), so you can see how easy it is to deploy and manage apps with GitOps-even across multiple clusters in different locations.
 
 [[deploy-applications-using-openshift-gitops]]
 
@@ -294,19 +294,19 @@ image::03-app-complete.png[link=self, window=blank, width=100%, ACM App Placemen
 
 *RHACM is built for this purpose!*
 
-* **Codify sovereignty policies** — express sovereignty and compliance requirements as policy resources, versioned and reviewed alongside your application code.
-* **Govern at scale** — target policies to specific regions or environments using ClusterSets and labels, enforcing consistency across geographies.
-* **Monitor autonomously** — continuously check for “drift” against your defined guardrails, surfacing violations centrally to maintain trust.
-* **Delegate, but enforce boundaries** — let application teams move fast within a framework set by platform teams, ensuring business autonomy never compromises organizational standards.
+* **Codify sovereignty policies** - express sovereignty and compliance requirements as policy resources, versioned and reviewed alongside your application code.
+* **Govern at scale** - target policies to specific regions or environments using ClusterSets and labels, enforcing consistency across geographies.
+* **Monitor autonomously** - continuously check for “drift” against your defined guardrails, surfacing violations centrally to maintain trust.
+* **Delegate, but enforce boundaries** - let application teams move fast within a framework set by platform teams, ensuring business autonomy never compromises organizational standards.
 
 === Addressing Policies in a Single Cluster with Region
 
 The EMEA - European Union's - General Data Protection Regulation (GDPR) is one of the most comprehensive data protection frameworks in the world. It also comes with a lot of headaches for organizations that operate in the EU. For Kubernetes clusters operating in EMEA, GDPR imposes specific technical requirements that must be codified as policy.
 
 Let's deploy 3 policies to the EMEA cluster to address the core pillars of GDPR's technical requirements: 
-- **data residency labeling** (Articles 44-49 — ensuring sovereignty namespaces exist with proper classification metadata)
-- **data protection by design** (Article 25 — network isolation)
-- and **security of processing** (Article 32 — pod security hardening).
+- **data residency labeling** (Articles 44-49 - ensuring sovereignty namespaces exist with proper classification metadata)
+- **data protection by design** (Article 25 - network isolation)
+- and **security of processing** (Article 32 - pod security hardening).
 
 === Deploying Policies to the EMEA Managed Cluster
 
@@ -460,17 +460,17 @@ fi
 
 === Multicluster Management Takeaways
 
-* **Centralized cluster management** — Use RHACM to create, label, and manage OpenShift clusters across multiple regions from one place.
+* **Centralized cluster management** - Use RHACM to create, label, and manage OpenShift clusters across multiple regions from one place.
 
-* **Unified workload management** — Operate virtual machines and containers together, with full visibility across clusters.
+* **Unified workload management** - Operate virtual machines and containers together, with full visibility across clusters.
 
-* **Consistent app deployment** — Deploy and update applications to multiple clusters using Git-backed automation with OpenShift GitOps and RHACM.
+* **Consistent app deployment** - Deploy and update applications to multiple clusters using Git-backed automation with OpenShift GitOps and RHACM.
 
-* **Automated compliance** — Define and enforce policies as code to meet residency and organizational requirements.
+* **Automated compliance** - Define and enforce policies as code to meet residency and organizational requirements.
 
 
 
 [WARNING]
 ====
-*Before moving on:* Please run the cleanup commands in this module. This cluster has limited resources — leaving workloads running can cause resource pressure that may affect your experience in later modules.
+*Before moving on:* Please run the cleanup commands in this module. This cluster has limited resources - leaving workloads running can cause resource pressure that may affect your experience in later modules.
 ====

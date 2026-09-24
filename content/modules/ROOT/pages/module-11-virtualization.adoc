@@ -278,7 +278,7 @@ Need another copy of a VM - for testing, dev environments, or scaling out? Clone
 
 **Step 1: Stop the VM**
 
-Cloning a running VM requires taking a live snapshot first, which is slow and unreliable on this infrastructure. Stop the VM before cloning — OpenShift can then clone the disk directly, which is fast and always works.
+Cloning a running VM requires taking a live snapshot first, which is slow and unreliable on this infrastructure. Stop the VM before cloning - OpenShift can then clone the disk directly, which is fast and always works.
 
 . On the **rhel9-vm** details page, click **Actions** -> **Stop**
 . Wait until the status shows **Stopped**
@@ -457,5 +457,5 @@ echo "Cleanup running in background - you can continue to the next module"
 
 [WARNING]
 ====
-*Before moving on:* Please run the cleanup commands in this module. This cluster has limited resources — leaving workloads running can cause resource pressure that may affect your experience in later modules.
+*Before moving on:* Please run the cleanup commands in this module. This cluster has limited resources - leaving workloads running can cause resource pressure that may affect your experience in later modules.
 ====
