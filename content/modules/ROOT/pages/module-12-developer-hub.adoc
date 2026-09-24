@@ -440,3 +440,9 @@ oc patch backstage developer-hub -n backstage --type=merge -p '{"spec":{"monitor
 oc delete namespace order-tracker 2>/dev/null
 echo "Cleanup complete"
 ----
+
+
+[WARNING]
+====
+*Before moving on:* Please run the cleanup commands in this module. This is a shared cluster with limited resources — leaving workloads running can cause resource pressure that affects you and other participants in later modules.
+====

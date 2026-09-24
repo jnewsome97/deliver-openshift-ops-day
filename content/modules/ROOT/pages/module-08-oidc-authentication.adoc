@@ -370,3 +370,9 @@ Both methods are valid - choose based on your organization's identity infrastruc
 * **Red Hat build of Keycloak:** link:https://docs.redhat.com/en/documentation/red_hat_build_of_keycloak/[RHBK Documentation, window=blank]
 * **RHBK Operator:** link:https://docs.redhat.com/en/documentation/red_hat_build_of_keycloak/26.0/html/operator_guide/index[RHBK Operator Guide, window=blank]
 * **RBAC Documentation:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/authentication_and_authorization/using-rbac[Using RBAC, window=blank]
+
+
+[WARNING]
+====
+*Before moving on:* Please run the cleanup commands in this module. This is a shared cluster with limited resources — leaving workloads running can cause resource pressure that affects you and other participants in later modules.
+====

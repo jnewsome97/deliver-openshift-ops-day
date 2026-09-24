@@ -312,3 +312,9 @@ oc delete project performance-demo
 |===
 
 **The pattern:** Don't guess resources → Use VPA to measure → Apply recommendations → Use HPA for load variation
+
+
+[WARNING]
+====
+*Before moving on:* Please run the cleanup commands in this module. This is a shared cluster with limited resources — leaving workloads running can cause resource pressure that affects you and other participants in later modules.
+====

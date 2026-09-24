@@ -643,3 +643,9 @@ else
   echo "ERROR: Could not download cleanup-ldap.sh from the Showroom instance or GitHub. Check your network connection and re-run this command."
 fi
 ----
+
+
+[WARNING]
+====
+*Before moving on:* Please run the cleanup commands in this module. This is a shared cluster with limited resources — leaving workloads running can cause resource pressure that affects you and other participants in later modules.
+====

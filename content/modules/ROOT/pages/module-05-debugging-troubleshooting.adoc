@@ -529,3 +529,9 @@ The pattern is always the same: **check status → describe pod/replicaset → r
 oc delete namespace debug-lab --ignore-not-found --wait=false
 echo "Cleanup running in background - you can continue to the next module"
 ----
+
+
+[WARNING]
+====
+*Before moving on:* Please run the cleanup commands in this module. This is a shared cluster with limited resources — leaving workloads running can cause resource pressure that affects you and other participants in later modules.
+====

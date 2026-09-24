@@ -453,3 +453,9 @@ echo "Cleanup running in background - you can continue to the next module"
 * **virtctl Reference:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/virtualization/getting-started#virt-using-the-cli-tools[virtctl commands, window=blank]
 * **Live Migration:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/virtualization/live-migration[Live migration documentation, window=blank]
 * **VM Snapshots:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/virtualization/backup-and-restore[Backup and restore documentation, window=blank]
+
+
+[WARNING]
+====
+*Before moving on:* Please run the cleanup commands in this module. This is a shared cluster with limited resources — leaving workloads running can cause resource pressure that affects you and other participants in later modules.
+====

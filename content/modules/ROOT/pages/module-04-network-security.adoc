@@ -561,3 +561,9 @@ oc get dns cluster -o yaml
 * **NetworkPolicy:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/network_security/network-policy[About network policy, window=blank]
 * **EgressFirewall:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/network_security/egress-firewall[Configuring an egress firewall for a project, window=blank]
 * **EgressIP:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/ovn-kubernetes_network_plugin/configuring-egress-ips-ovn[Configuring an egress IP address, window=blank]
+
+
+[WARNING]
+====
+*Before moving on:* Please run the cleanup commands in this module. This is a shared cluster with limited resources — leaving workloads running can cause resource pressure that affects you and other participants in later modules.
+====

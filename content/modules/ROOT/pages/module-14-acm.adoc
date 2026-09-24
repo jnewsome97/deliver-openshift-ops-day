@@ -468,3 +468,9 @@ fi
 
 * **Automated compliance** — Define and enforce policies as code to meet residency and organizational requirements.
 
+
+
+[WARNING]
+====
+*Before moving on:* Please run the cleanup commands in this module. This is a shared cluster with limited resources — leaving workloads running can cause resource pressure that affects you and other participants in later modules.
+====

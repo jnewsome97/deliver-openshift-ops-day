@@ -720,3 +720,9 @@ oc get tempomonolithic -n tracing-system
 * **Logging 6.6 Stack:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/logging/about-logging[Logging 6.6, window=blank]
 * **OpenShift Distributed Tracing:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/distributed_tracing/index[Distributed Tracing, window=blank]
 * **Red Hat build of OpenTelemetry:** link:https://docs.redhat.com/en/documentation/red_hat_build_of_opentelemetry/[OpenTelemetry, window=blank]
+
+
+[WARNING]
+====
+*Before moving on:* Please run the cleanup commands in this module. This is a shared cluster with limited resources — leaving workloads running can cause resource pressure that affects you and other participants in later modules.
+====
