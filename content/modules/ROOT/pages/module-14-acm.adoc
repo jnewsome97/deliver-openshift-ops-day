@@ -472,5 +472,5 @@ fi
 
 [WARNING]
 ====
-*Before moving on:* Please run the cleanup commands in this module. This is a shared cluster with limited resources — leaving workloads running can cause resource pressure that affects you and other participants in later modules.
+*Before moving on:* Please run the cleanup commands in this module. This cluster has limited resources — leaving workloads running can cause resource pressure that may affect your experience in later modules.
 ====
