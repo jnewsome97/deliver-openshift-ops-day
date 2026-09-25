@@ -1,84 +1,75 @@
 ---
-# The upstream OLS role (agnosticd.ai_workloads.ocp4_workload_ols) defaults
-# ocp4_workload_ai_platform: azure which creates an OLSConfig automatically.
-# We can't undefine that variable from agnosticv (role defaults always apply).
-# Instead, this cleanup role runs immediately after OLS and deletes the
-# OLSConfig. What remains on the cluster:
-#   - Operator: installed and running (lightspeed-operator CSV)
-#   - Secret: azure-api-keys with Azure OpenAI credentials
-#   - Namespace: openshift-lightspeed
-# Students follow openshift-lightspeed.adoc to create the OLSConfig manually.
+# Temporarily commented out for testing - leaving OLSConfig in place so OLS
+# is pre-configured at provisioning time rather than students creating it manually.
 
-- name: Check for OLSConfig created by upstream role
-  kubernetes.core.k8s_info:
-    api_version: ols.openshift.io/v1alpha1
-    kind: OLSConfig
-    name: cluster
-  register: r_olsconfig_check
-  ignore_errors: true
+# - name: Check for OLSConfig created by upstream role
+#   kubernetes.core.k8s_info:
+#     api_version: ols.openshift.io/v1alpha1
+#     kind: OLSConfig
+#     name: cluster
+#   register: r_olsconfig_check
+#   ignore_errors: true
 
-- name: Wait for OLS pods to finish being created before deleting OLSConfig
-  # The upstream role returns as soon as the OLSConfig CR exists, before the
-  # operator has finished creating its pods. Deleting the CR while pods are
-  # still ContainerCreating races the container runtime and can leave them
-  # stuck in Terminating past their grace period. Waiting for pods to reach
-  # a settled phase first (not necessarily passing health checks) avoids
-  # that race entirely.
-  when: r_olsconfig_check.resources | default([]) | length > 0
-  kubernetes.core.k8s_info:
-    api_version: v1
-    kind: Pod
-    namespace: openshift-lightspeed
-    label_selectors:
-    - app.kubernetes.io/managed-by=lightspeed-operator
-  register: r_ols_pods_pre
-  until:
-    - r_ols_pods_pre.resources | length > 0
-    - r_ols_pods_pre.resources | rejectattr('status.phase', 'in', ['Pending']) | list | length == r_ols_pods_pre.resources | length
-  retries: 30
-  delay: 5
-  ignore_errors: true
+# - name: Wait for OLS pods to finish being created before deleting OLSConfig
+#   when: r_olsconfig_check.resources | default([]) | length > 0
+#   kubernetes.core.k8s_info:
+#     api_version: v1
+#     kind: Pod
+#     namespace: openshift-lightspeed
+#     label_selectors:
+#     - app.kubernetes.io/managed-by=lightspeed-operator
+#   register: r_ols_pods_pre
+#   until:
+#     - r_ols_pods_pre.resources | length > 0
+#     - r_ols_pods_pre.resources | rejectattr('status.phase', 'in', ['Pending']) | list | length == r_ols_pods_pre.resources | length
+#   retries: 30
+#   delay: 5
+#   ignore_errors: true
 
-- name: Delete OLSConfig created by upstream role
-  kubernetes.core.k8s:
-    api_version: ols.openshift.io/v1alpha1
-    kind: OLSConfig
-    name: cluster
-    state: absent
-  register: r_olsconfig_delete
-  ignore_errors: true
+# - name: Delete OLSConfig created by upstream role
+#   kubernetes.core.k8s:
+#     api_version: ols.openshift.io/v1alpha1
+#     kind: OLSConfig
+#     name: cluster
+#     state: absent
+#   register: r_olsconfig_delete
+#   ignore_errors: true
 
-- name: Wait for OLS pods to terminate
-  when: r_olsconfig_delete is changed
-  kubernetes.core.k8s_info:
-    api_version: v1
-    kind: Pod
-    namespace: openshift-lightspeed
-    label_selectors:
-    - app.kubernetes.io/managed-by=lightspeed-operator
-  register: r_ols_pods
-  until: r_ols_pods.resources | length == 0
-  retries: 30
-  delay: 5
-  ignore_errors: true
+# - name: Wait for OLS pods to terminate
+#   when: r_olsconfig_delete is changed
+#   kubernetes.core.k8s_info:
+#     api_version: v1
+#     kind: Pod
+#     namespace: openshift-lightspeed
+#     label_selectors:
+#     - app.kubernetes.io/managed-by=lightspeed-operator
+#   register: r_ols_pods
+#   until: r_ols_pods.resources | length == 0
+#   retries: 30
+#   delay: 5
+#   ignore_errors: true
 
-- name: Force-delete any OLS pods still stuck terminating
-  when:
-    - r_olsconfig_delete is changed
-    - r_ols_pods.resources | default([]) | length > 0
-  kubernetes.core.k8s:
-    api_version: v1
-    kind: Pod
-    namespace: openshift-lightspeed
-    name: "{{ item.metadata.name }}"
-    state: absent
-    delete_options:
-      grace_period_seconds: 0
-  loop: "{{ r_ols_pods.resources }}"
-  ignore_errors: true
+# - name: Force-delete any OLS pods still stuck terminating
+#   when:
+#     - r_olsconfig_delete is changed
+#     - r_ols_pods.resources | default([]) | length > 0
+#   kubernetes.core.k8s:
+#     api_version: v1
+#     kind: Pod
+#     namespace: openshift-lightspeed
+#     name: "{{ item.metadata.name }}"
+#     state: absent
+#     delete_options:
+#       grace_period_seconds: 0
+#   loop: "{{ r_ols_pods.resources }}"
+#   ignore_errors: true
 
-- name: OLS cleanup status
+# - name: OLS cleanup status
+#   debug:
+#     msg: >-
+#       OLSConfig {{ 'deleted - operator installed, secrets intact, students will create config manually'
+#       if r_olsconfig_delete is changed else 'not found - nothing to clean up' }}.
+
+- name: OLS cleanup skipped
   debug:
-    msg: >-
-      OLSConfig {{ 'deleted - operator installed, secrets intact, students will create config manually'
-      if r_olsconfig_delete is changed else 'not found - nothing to clean up' }}.
+    msg: "OLS cleanup skipped - OLSConfig left in place for testing pre-configured OLS."
