@@ -528,6 +528,27 @@
     label: "{{ item.name }}"
   ignore_errors: true
 
+- name: Wait for snapshot CatalogSources to reach READY state
+  shell: |
+    oc get catalogsource {{ item.name }} -n {{ item.namespace }} \
+      -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null
+  register: r_catalog_state
+  until: r_catalog_state.stdout == "READY"
+  retries: 30
+  delay: 10
+  loop:
+    - name: redhat-operators-snapshot-web-terminal
+      namespace: openshift-operators
+    - name: redhat-operators-snapshot-kubevirt
+      namespace: openshift-cnv
+    - name: redhat-operators-snapshot-mtv
+      namespace: metallb-system
+    - name: redhat-operators-snapshot-lightspeed
+      namespace: openshift-marketplace
+  loop_control:
+    label: "{{ item.name }}"
+  ignore_errors: true
+
 - name: DEBUG - All CatalogSources
   shell: |
     echo "=== CATALOG SOURCES ==="
