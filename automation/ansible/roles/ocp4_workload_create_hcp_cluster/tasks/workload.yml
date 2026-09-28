@@ -225,6 +225,74 @@
       fail:
         msg: "HCP HostedCluster did not become available within {{ ocp4_workload_create_hcp_cluster_timeout }} seconds. See diagnostics above."
 
+# ==============================================================================
+# Reduce HCP OLM catalog disk footprint on compact hub nodes.
+# The HCP control plane runs 4 large catalog Deployments in clusters-<name>
+# that pull multi-GB index images and churn ephemeral storage alongside the
+# hub's own workloads. On compact 3-node clusters this causes DiskPressure
+# and eviction storms.
+#
+# We disable certified, community, and marketplace catalogs — none of which
+# serve any subscription in this lab. redhat-operators-catalog is kept running
+# because ACM OperatorPolicies install compliance-operator and gitops-operator
+# from that source on the managed cluster.
+#
+# The HostedCluster is paused so HyperShift does not reconcile catalog-operator
+# back to its desired replica count after we scale it down.
+# ==============================================================================
+
+- name: Pause HostedCluster to prevent HyperShift from reconciling OLM catalog-operator
+  kubernetes.core.k8s:
+    state: patched
+    api_version: hypershift.openshift.io/v1beta1
+    kind: HostedCluster
+    name: "{{ ocp4_workload_create_hcp_cluster_name }}"
+    namespace: "{{ ocp4_workload_create_hcp_cluster_namespace }}"
+    definition:
+      spec:
+        pausedUntil: "true"
+
+- name: Wait for catalog-operator Deployment to appear in HCP control plane namespace
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: catalog-operator
+    namespace: "clusters-{{ ocp4_workload_create_hcp_cluster_name }}"
+  register: r_hcp_catalog_operator
+  retries: 18
+  delay: 10
+  until: r_hcp_catalog_operator.resources | length > 0
+  ignore_errors: true
+
+- name: Scale down HCP catalog-operator so it stops managing catalog Deployments
+  kubernetes.core.k8s:
+    state: patched
+    api_version: apps/v1
+    kind: Deployment
+    name: catalog-operator
+    namespace: "clusters-{{ ocp4_workload_create_hcp_cluster_name }}"
+    definition:
+      spec:
+        replicas: 0
+  when: r_hcp_catalog_operator.resources | length > 0
+  ignore_errors: true
+
+- name: Scale down unused OLM catalog Deployments in HCP control plane namespace
+  kubernetes.core.k8s:
+    state: patched
+    api_version: apps/v1
+    kind: Deployment
+    name: "{{ item }}"
+    namespace: "clusters-{{ ocp4_workload_create_hcp_cluster_name }}"
+    definition:
+      spec:
+        replicas: 0
+  loop:
+    - certified-operators-catalog
+    - community-operators-catalog
+    - redhat-marketplace-catalog
+  ignore_errors: true
+
 - name: Get hosted cluster kubeconfig secret name
   set_fact:
     _hcp_kubeconfig_secret: "{{ ocp4_workload_create_hcp_cluster_name }}-admin-kubeconfig"

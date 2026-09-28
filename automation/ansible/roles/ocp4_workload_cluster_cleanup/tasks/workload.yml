@@ -105,3 +105,33 @@
     label: "{{ item.item | default('unknown') }}"
   when: r_image_prune is defined
   ignore_errors: true
+
+# ==============================================================================
+# PHASE 3: Remove unused console plugins
+# pipelines-console-plugin is installed by the Pipelines operator but is not
+# used in any lab module. Removing it prevents a console DashboardsPage
+# initialization error caused by the plugin's ToastContext provider changing
+# module evaluation order at startup. Task is idempotent.
+# ==============================================================================
+
+- name: Get current console enabled plugins
+  kubernetes.core.k8s_info:
+    api_version: operator.openshift.io/v1
+    kind: Console
+    name: cluster
+  register: r_console_plugins
+  ignore_errors: true
+
+- name: Remove pipelines-console-plugin from console enabled list
+  kubernetes.core.k8s:
+    state: patched
+    api_version: operator.openshift.io/v1
+    kind: Console
+    name: cluster
+    definition:
+      spec:
+        plugins: >-
+          {{ r_console_plugins.resources[0].spec.plugins | default([])
+             | reject('equalto', 'pipelines-console-plugin') | list }}
+  when: "'pipelines-console-plugin' in (r_console_plugins.resources[0].spec.plugins | default([]))"
+  ignore_errors: true
