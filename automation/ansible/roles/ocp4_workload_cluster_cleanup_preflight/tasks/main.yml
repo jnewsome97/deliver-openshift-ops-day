@@ -1,4 +1,82 @@
 ---
+# ==============================================================================
+# Apply KubeletConfig to lower image GC thresholds before workloads start.
+# Default thresholds (85%/80%) leave too little headroom on compact 3-node
+# clusters: by the time kubelet GC triggers, the cluster is already close to
+# the eviction wall (~90%). Lowering to 75%/65% gives a 15% recovery buffer
+# and prevents the eviction cascade that occurs during heavy image-pull windows.
+#
+# This triggers a rolling restart of the master MachineConfigPool (one node at
+# a time). We wait for the pool to fully update before continuing so that all
+# subsequent workloads run on nodes with the correct kubelet settings.
+# ==============================================================================
+
+- name: Apply KubeletConfig to lower image GC thresholds on compact cluster nodes
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: machineconfiguration.openshift.io/v1
+      kind: KubeletConfig
+      metadata:
+        name: compact-cluster-image-gc
+      spec:
+        machineConfigPoolSelector:
+          matchLabels:
+            pools.operator.machineconfiguration.openshift.io/master: ""
+        kubeletConfig:
+          imageGCHighThresholdPercent: 75
+          imageGCLowThresholdPercent: 65
+  register: r_kubelet_config
+  when: ACTION == "provision"
+  ignore_errors: true
+
+- name: Wait for MachineConfigPool master to begin rolling out new KubeletConfig
+  kubernetes.core.k8s_info:
+    api_version: machineconfiguration.openshift.io/v1
+    kind: MachineConfigPool
+    name: master
+  register: r_mcp_updating
+  retries: 18
+  delay: 10
+  until: >-
+    r_mcp_updating.resources | length > 0 and (
+    r_mcp_updating.resources[0].status.conditions
+      | selectattr('type', 'equalto', 'Updating')
+      | selectattr('status', 'equalto', 'True')
+      | list | length > 0
+    or
+    (r_mcp_updating.resources[0].status.updatedMachineCount | default(0) | int)
+      < (r_mcp_updating.resources[0].status.machineCount | default(1) | int)
+    )
+  when:
+    - ACTION == "provision"
+    - r_kubelet_config is changed
+  ignore_errors: true
+
+- name: Wait for MachineConfigPool master to finish rolling update
+  kubernetes.core.k8s_info:
+    api_version: machineconfiguration.openshift.io/v1
+    kind: MachineConfigPool
+    name: master
+  register: r_mcp_done
+  retries: 90
+  delay: 20
+  until: >-
+    r_mcp_done.resources | length > 0 and
+    r_mcp_done.resources[0].status.conditions
+      | selectattr('type', 'equalto', 'Updated')
+      | selectattr('status', 'equalto', 'True')
+      | list | length > 0 and
+    r_mcp_done.resources[0].status.conditions
+      | selectattr('type', 'equalto', 'Updating')
+      | selectattr('status', 'equalto', 'False')
+      | list | length > 0 and
+    r_mcp_done.resources[0].status.degradedMachineCount | default(0) | int == 0
+  when:
+    - ACTION == "provision"
+    - r_kubelet_config is changed
+  ignore_errors: true
+
 - name: Pre-flight cluster cleanup - free disk before operator installs
   when: ACTION == "provision"
   ansible.builtin.include_role:

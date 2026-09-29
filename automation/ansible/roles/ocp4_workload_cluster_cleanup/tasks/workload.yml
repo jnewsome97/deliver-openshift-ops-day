@@ -135,3 +135,28 @@
              | reject('equalto', 'pipelines-console-plugin') | list }}
   when: "'pipelines-console-plugin' in (r_console_plugins.resources[0].spec.plugins | default([]))"
   ignore_errors: true
+
+# ==============================================================================
+# PHASE 4: Stop catalog sources from auto-polling for new index images
+# The redhat-operators catalog refreshes its index on a 10-minute interval by
+# default, pulling a new multi-GB image each time. Once all operator
+# subscriptions are resolved the index will not meaningfully change during
+# a lab session. Removing the poll interval keeps the catalog serving its
+# current index without churning disk. Running at both pos 116 (via preflight)
+# and pos 187 (directly) ensures the setting is in place from the start and
+# survives any operator that might re-enable polling.
+# ==============================================================================
+
+- name: Stop redhat-operators catalog from auto-polling for new index images
+  kubernetes.core.k8s:
+    state: patched
+    api_version: operators.coreos.com/v1alpha1
+    kind: CatalogSource
+    name: redhat-operators
+    namespace: openshift-marketplace
+    merge_type: merge
+    definition:
+      spec:
+        updateStrategy:
+          registryPoll: null
+  ignore_errors: true
