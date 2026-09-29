@@ -77,6 +77,29 @@
     - r_kubelet_config is changed
   ignore_errors: true
 
+- name: Wait for OLM packageserver to recover after MCP rollout
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: ClusterOperator
+    name: operator-lifecycle-manager-packageserver
+  register: r_packageserver_co
+  retries: 30
+  delay: 20
+  until: >-
+    r_packageserver_co.resources | length > 0 and
+    r_packageserver_co.resources[0].status.conditions
+      | selectattr('type', 'equalto', 'Available')
+      | selectattr('status', 'equalto', 'True')
+      | list | length > 0 and
+    r_packageserver_co.resources[0].status.conditions
+      | selectattr('type', 'equalto', 'Degraded')
+      | selectattr('status', 'equalto', 'False')
+      | list | length > 0
+  when:
+    - ACTION == "provision"
+    - r_kubelet_config is changed
+  ignore_errors: true
+
 - name: Pre-flight cluster cleanup - free disk before operator installs
   when: ACTION == "provision"
   ansible.builtin.include_role:
