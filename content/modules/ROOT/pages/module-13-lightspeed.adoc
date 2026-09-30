@@ -16,18 +16,13 @@ OpenShift Lightspeed (OLS) is an AI-powered assistant integrated into the OpenSh
 * Assisted YAML generation
 * Troubleshooting cluster issues
 
-In this module, you'll configure OpenShift Lightspeed and use it to understand OpenShift concepts, gather information from cluster resources, troubleshoot broken workloads and more.
-
-=== Prerequisites
-
-The OpenShift Lightspeed Operator has been pre-installed on your cluster. However, to be fully operational, OpenShift Lightspeed must be connected to an LLM provider. In this module, you'll also create the configuration necessary to enable this connection.
+In this module, you'll use OpenShift Lightspeed to understand OpenShift concepts, gather information from cluster resources, troubleshoot broken workloads and more.
 
 image::diagrams/13_lightspeed.png[OpenShift Lightspeed Architecture, align=center, link=self, window=blank]
-== Deploy OpenShift Lightspeed
 
-=== Verify the Operator Installation
+== Verify OpenShift Lightspeed
 
-First, verify the OpenShift Lightspeed operator is installed:
+OpenShift Lightspeed has been pre-configured on your cluster and connected to an Azure OpenAI backend. Verify the operator is installed:
 
 [source,bash,role=execute]
 ----
@@ -39,25 +34,17 @@ You should see the operator in `Succeeded` phase.
 You can also verify in the console by navigating to *Ecosystem* → *Installed Operators*. Make sure to toggle on **Show default projects** in the project dropdown, then select the `openshift-lightspeed` namespace:
 
 image::ols-operator-installed.png[OpenShift Lightspeed Operator Installed, link=self, window=blank]
+
 To switch namespace, use the dropdown at the top:
 
 image::ols-switch-namespace.png[Switch to openshift-lightspeed namespace, link=self, window=blank]
-=== Create the OLSConfig
 
-The operator is installed but needs configuration to connect to an LLM provider. OpenShift Lightspeed supports various model providers, including public cloud services (WatsonX, Azure OpenAI, OpenAI) and on-premise solutions (Red Hat OpenShift AI, RHEL AI). For this workshop, Azure OpenAI credentials have been pre-configured as a secret.
+=== Configuration
 
-Verify the credentials secret exists:
+The OLSConfig resource defines how Lightspeed connects to an LLM provider. OpenShift Lightspeed supports various providers including public cloud services (WatsonX, Azure OpenAI, OpenAI) and on-premise solutions (Red Hat OpenShift AI, RHEL AI). For this workshop, Azure OpenAI credentials have been pre-configured and the following configuration was applied during environment setup:
 
-[source,bash,role=execute]
+[source,yaml]
 ----
-oc get secret azure-api-keys -n openshift-lightspeed
-----
-
-Now create the OLSConfig to enable OpenShift Lightspeed:
-
-[source,bash,subs="+macros,+attributes",role=execute]
-----
-oc apply -f - <<EOF
 apiVersion: ols.openshift.io/v1alpha1
 kind: OLSConfig
 metadata:
@@ -78,7 +65,6 @@ spec:
     defaultProvider: Azure
     logLevel: DEBUG
     introspectionEnabled: true
-EOF
 ----
 
 Key configuration parameters:
@@ -92,35 +78,7 @@ Key configuration parameters:
 * `spec.ols.defaultProvider` - Sets the default provider when multiple are configured
 * `spec.ols.introspectionEnabled` - When set to `true`, OpenShift Lightspeed automatically deploys an MCP server that allows users to query cluster resources to provide context-aware responses (Technology Preview in OpenShift 4.20)
 
-=== Wait for OpenShift Lightspeed to Initialize
-
-The Lightspeed pods take 3-5 minutes to start while TLS certificates are generated and container images are pulled. This command waits for everything to be ready:
-
-[source,bash,role="execute"]
-----
-echo "Waiting for Lightspeed to start (this takes 3-5 minutes)..."
-ELAPSED=0
-until oc get pods -n openshift-lightspeed -l app.kubernetes.io/component=application-server --no-headers 2>/dev/null | grep -q "2/2.*Running"; do
-  sleep 10; ELAPSED=$((ELAPSED+10))
-  [ $ELAPSED -ge 600 ] && echo "ERROR: Timed out after 10 minutes" && break
-done
-echo "Lightspeed is ready"
-oc get pods -n openshift-lightspeed
-----
-
-You should see all pods `Running`:
-
-----
-NAME                                                     READY   STATUS    RESTARTS        AGE
-lightspeed-app-server-xxxxx                              2/2     Running   0               3m
-lightspeed-console-plugin-xxxxx                          1/1     Running   0               3m
-lightspeed-operator-controller-manager-xxxxx              1/1     Running   0               83m
-lightspeed-postgres-server-xxxxx                         1/1     Running   1               3m
-----
-
-NOTE: The postgres pod may show 1 restart - this is normal during initial startup.
-
-Check the OLSConfig status:
+Check the OLSConfig status to confirm everything is ready:
 
 [source,bash,role=execute]
 ----
@@ -128,6 +86,13 @@ oc get olsconfig cluster -o jsonpath='{.status.conditions}' | jq .
 ----
 
 All conditions should show `"status": "True"` and `"message": "Ready"`.
+
+[source,bash,role=execute]
+----
+oc get pods -n openshift-lightspeed
+----
+
+You should see all pods `Running`.
 
 == Using Lightspeed
 
@@ -249,8 +214,7 @@ OpenShift Lightspeed provides AI-assisted operations directly in the console. By
 
 In this module, you:
 
-* Verified the OpenShift Lightspeed operator installation
-* Created an OLSConfig to connect to Azure OpenAI
+* Verified the OpenShift Lightspeed installation
 * Accessed the OpenShift Lightspeed chat interface
 * Used OpenShift Lightspeed to learn OpenShift concepts, generate configurations and troubleshoot issues
 
