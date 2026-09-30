@@ -4,6 +4,53 @@
   ansible.builtin.include_role:
     name: deliver_openshift_ops_day.automation.ocp4_workload_cluster_cleanup
 
+# Every operator that registers a ConsolePlugin (gitops, acm/hcp, security/
+# RHACS, ols/lightspeed, etc.) makes console-operator roll the openshift-console
+# Deployment. Since this file runs last, right after _security_workloads (the
+# slowest/heaviest group, so usually the last plugin to register), the claim
+# was previously being handed to the learner while that final console rollout
+# was still in flight -- their first login would open a websocket watch on a
+# console pod that then got killed mid-rollout, which is what was producing
+# the blank-page/unresponsive-tab symptom on first load. Block here until the
+# console has finished rolling out and stayed stable for a settle window.
+- name: "Cluster cleanup final | Wait for openshift-console Deployment to finish rolling out"
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: console
+    namespace: openshift-console
+  register: r_console_deploy
+  until:
+    - r_console_deploy.resources | default([]) | length > 0
+    - r_console_deploy.resources[0].status.observedGeneration | default(-1) == r_console_deploy.resources[0].metadata.generation | default(-2)
+    - (r_console_deploy.resources[0].status.updatedReplicas | default(0) | int) == (r_console_deploy.resources[0].spec.replicas | default(1) | int)
+    - (r_console_deploy.resources[0].status.readyReplicas | default(0) | int) == (r_console_deploy.resources[0].spec.replicas | default(1) | int)
+    - (r_console_deploy.resources[0].status.replicas | default(0) | int) == (r_console_deploy.resources[0].spec.replicas | default(1) | int)
+  retries: 30
+  delay: 10
+  when: ACTION == "provision"
+
+- name: "Cluster cleanup final | Hold to let console settle in case another plugin registers late"
+  ansible.builtin.pause:
+    seconds: 60
+  when: ACTION == "provision"
+
+- name: "Cluster cleanup final | Confirm console Deployment is still stable after settle window"
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: console
+    namespace: openshift-console
+  register: r_console_deploy_final
+  until:
+    - r_console_deploy_final.resources | default([]) | length > 0
+    - r_console_deploy_final.resources[0].status.observedGeneration | default(-1) == r_console_deploy_final.resources[0].metadata.generation | default(-2)
+    - (r_console_deploy_final.resources[0].status.updatedReplicas | default(0) | int) == (r_console_deploy_final.resources[0].spec.replicas | default(1) | int)
+    - (r_console_deploy_final.resources[0].status.readyReplicas | default(0) | int) == (r_console_deploy_final.resources[0].spec.replicas | default(1) | int)
+  retries: 30
+  delay: 10
+  when: ACTION == "provision"
+
 - name: Skip cleanup on destroy
   when: ACTION == "destroy"
   debug:
