@@ -17,7 +17,7 @@
 # parameterizable since they come from someone else's setup scripts.
 #
 # So instead of reproducing the full external lab, this validates the actual
-# mechanism that makes the lab possible and that healthcheck.yaml's simple
+# mechanism that makes the lab possible and that healthcheck.yml's simple
 # "is the operator Deployment ready" check doesn't cover: whether ZTWIM's
 # SPIFFE identity injection admission webhook is actually registered on the
 # cluster. Without it, configure-ztwim-lab.sh would have nothing to attach

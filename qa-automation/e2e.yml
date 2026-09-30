@@ -3,7 +3,7 @@
 # Runs all module solve + validate sequences to verify the full lab
 # works from start to finish without manual intervention.
 #
-# Unlike healthcheck.yaml, this is NOT read-only -- module task files under
+# Unlike healthcheck.yml, this is NOT read-only -- module task files under
 # tasks/e2e/ create and clean up real resources to simulate what a learner
 # would actually do.
 #
@@ -12,7 +12,7 @@
 # the same workloads. Module-specific e2e sequences live in tasks/e2e/ and
 # are only included when their module was actually enabled for this claim
 # (read from the MODULE_ENABLE_* env vars common.yaml sets on the Showroom
-# pod), mirroring the same module-awareness healthcheck.yaml uses. Module 1
+# pod), mirroring the same module-awareness healthcheck.yml uses. Module 1
 # (Overview) below is base content, not gated by any module_enable_* flag,
 # so it always runs.
 
@@ -49,7 +49,7 @@
     # The env lookup returns '' (not undefined) when a var isn't set, so
     # default() needs boolean=true to treat '' as missing too -- otherwise
     # it never overrides the empty string and every module gate defaults
-    # to disabled instead of enabled. Kept in sync with healthcheck.yaml.
+    # to disabled instead of enabled. Kept in sync with healthcheck.yml.
     module_enable_virt: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_VIRT') | default('true', true) | bool }}"
     module_enable_gitops: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_GITOPS') | default('true', true) | bool }}"
     module_enable_devhub: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_DEVHUB') | default('true', true) | bool }}"
@@ -145,7 +145,7 @@
 
     # -- Report ------------------------------------------------------------
     # acm.yml and ztwim.yml accumulate into hc_failures (same pattern as
-    # healthcheck.yaml) rather than failing fast, so a single e2e run can
+    # healthcheck.yml) rather than failing fast, so a single e2e run can
     # report every problem found instead of stopping at the first one.
 
     - name: Report healthy
