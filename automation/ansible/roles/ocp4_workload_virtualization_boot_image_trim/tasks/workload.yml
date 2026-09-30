@@ -1,0 +1,43 @@
+---
+# Runs after agnosticd.core_workloads.ocp4_workload_openshift_virtualization,
+# which creates the HyperConverged CR with enableCommonBootImageImport: true
+# (all 6 default golden images, unfiltered - see
+# ocp4_workload_openshift_virtualization_boot_sources_snapshot in dev.yaml
+# for why PVC format is forced on external Ceph RBD here). Each default
+# image is a full 30Gi PVC per cluster claim, and most workshop modules
+# only ever boot one of them. This does not modify the upstream role -
+# it only patches the HyperConverged CR it already created, adding
+# per-name overrides that disable the DataImportCrons this cluster
+# doesn't need.
+- name: Nothing to trim, skip
+  when: ocp4_workload_virtualization_boot_image_trim_disabled_images | length == 0
+  ansible.builtin.meta: end_host
+
+- name: Wait for HyperConverged CR to exist
+  kubernetes.core.k8s_info:
+    api_version: hco.kubevirt.io/v1beta1
+    kind: HyperConverged
+    name: kubevirt-hyperconverged
+    namespace: openshift-cnv
+  register: r_hco
+  retries: 30
+  delay: 10
+  until: r_hco.resources | length > 0
+
+- name: Build disabled boot image DataImportCron overrides
+  ansible.builtin.set_fact:
+    _ocp4_workload_virtualization_boot_image_trim_overrides: >-
+      {{ _ocp4_workload_virtualization_boot_image_trim_overrides | default([]) +
+      [{'metadata': {'name': item, 'annotations': {'dataimportcrontemplate.kubevirt.io/enable': 'false'}}}] }}
+  loop: "{{ ocp4_workload_virtualization_boot_image_trim_disabled_images }}"
+
+- name: Patch HyperConverged to disable unused default boot images
+  kubernetes.core.k8s:
+    state: patched
+    api_version: hco.kubevirt.io/v1beta1
+    kind: HyperConverged
+    name: kubevirt-hyperconverged
+    namespace: openshift-cnv
+    definition:
+      spec:
+        dataImportCronTemplates: "{{ _ocp4_workload_virtualization_boot_image_trim_overrides }}"

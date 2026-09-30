@@ -1,0 +1,6 @@
+---
+# List of default HCO golden-image DataImportCron names to disable, e.g.
+# - centos-stream9-image-cron
+# - fedora-image-cron
+# Leave empty to leave all default boot images enabled (no-op).
+ocp4_workload_virtualization_boot_image_trim_disabled_images: []

@@ -1,0 +1,28 @@
+= ocp4_workload_virtualization_boot_image_trim
+
+== Role overview
+
+Disables selected default HCO golden-image `DataImportCron` templates on an
+existing `HyperConverged` CR, without modifying the CR-creating role itself.
+
+Intended to run immediately after
+`agnosticd.core_workloads.ocp4_workload_openshift_virtualization`, which
+creates `HyperConverged` with `enableCommonBootImageImport: true`, importing
+all 6 default golden images unfiltered (CentOS Stream 9/10, Fedora, RHEL
+8/9/10). On storage classes forced to `dataImportCronSourceFormat: pvc`
+(such as external Ceph RBD, where `VolumeSnapshot` clones are unreliable),
+each of those is a full-size PVC per cluster claim, most of which a given
+workshop module never boots.
+
+== Variables
+
+[cols="1,1,3" options="header"]
+|===
+| Variable | Default | Description
+
+| `ocp4_workload_virtualization_boot_image_trim_disabled_images`
+| `[]`
+| List of default `DataImportCron` names to disable (e.g.
+`centos-stream9-image-cron`, `fedora-image-cron`, `rhel8-image-cron`,
+`rhel10-image-cron`). Empty list is a no-op.
+|===
