@@ -1,0 +1,9 @@
+---
+- name: Running workload provision tasks
+  when: ACTION == "provision"
+  ansible.builtin.include_tasks: workload.yml
+
+- name: Skip boot image trim on destroy
+  when: ACTION == "destroy"
+  ansible.builtin.debug:
+    msg: "Skipping boot image trim on destroy"
