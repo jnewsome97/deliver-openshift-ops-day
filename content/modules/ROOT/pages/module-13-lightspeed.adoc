@@ -22,19 +22,77 @@ image::diagrams/13_lightspeed.png[OpenShift Lightspeed Architecture, align=cente
 
 == Verify OpenShift Lightspeed
 
-OpenShift Lightspeed has been pre-configured on your cluster and connected to an Azure OpenAI backend. Verify it is running:
+OpenShift Lightspeed has been pre-configured on your cluster and connected to an Azure OpenAI backend. Verify the operator is installed:
 
 [source,bash,role=execute]
 ----
-oc get olsconfig cluster
+oc get csv -n openshift-lightspeed | grep lightspeed
 ----
+
+You should see the operator in `Succeeded` phase.
+
+You can also verify in the console by navigating to *Ecosystem* → *Installed Operators*. Make sure to toggle on **Show default projects** in the project dropdown, then select the `openshift-lightspeed` namespace:
+
+image::ols-operator-installed.png[OpenShift Lightspeed Operator Installed, link=self, window=blank]
+
+To switch namespace, use the dropdown at the top:
+
+image::ols-switch-namespace.png[Switch to openshift-lightspeed namespace, link=self, window=blank]
+
+=== Configuration
+
+The OLSConfig resource defines how Lightspeed connects to an LLM provider. OpenShift Lightspeed supports various providers including public cloud services (WatsonX, Azure OpenAI, OpenAI) and on-premise solutions (Red Hat OpenShift AI, RHEL AI). For this workshop, Azure OpenAI credentials have been pre-configured and the following configuration was applied during environment setup:
+
+[source,yaml]
+----
+apiVersion: ols.openshift.io/v1alpha1
+kind: OLSConfig
+metadata:
+  name: cluster
+spec:
+  llm:
+    providers:
+      - name: Azure
+        type: azure_openai
+        url: 'https://llm-gpt4-lightspeed.cognitiveservices.azure.com/'
+        deploymentName: gpt-4
+        credentialsSecretRef:
+          name: azure-api-keys
+        models:
+          - name: gpt-4
+  ols:
+    defaultModel: gpt-4
+    defaultProvider: Azure
+    logLevel: DEBUG
+    introspectionEnabled: true
+----
+
+Key configuration parameters:
+
+* `spec.llm.providers` - Defines the LLM provider(s) to use:
+** `type` - The provider type (e.g., `azure_openai`, `watsonx`, `rhoai_vllm`, etc)
+** `url` - The endpoint URL for the LLM service
+** `credentialsSecretRef` - References the secret containing the API credentials
+** `models` - The model name to use from this provider
+* `spec.ols.defaultModel` - Specifies which model to use by default for queries
+* `spec.ols.defaultProvider` - Sets the default provider when multiple are configured
+* `spec.ols.introspectionEnabled` - When set to `true`, OpenShift Lightspeed automatically deploys an MCP server that allows users to query cluster resources to provide context-aware responses (Technology Preview in OpenShift 4.20)
+
+Check the OLSConfig status to confirm everything is ready:
+
+[source,bash,role=execute]
+----
+oc get olsconfig cluster -o jsonpath='{.status.conditions}' | jq .
+----
+
+All conditions should show `"status": "True"` and `"message": "Ready"`.
 
 [source,bash,role=execute]
 ----
 oc get pods -n openshift-lightspeed
 ----
 
-You should see all pods `Running` and the OLSConfig in a `Ready` state.
+You should see all pods `Running`.
 
 == Using Lightspeed
 
