@@ -1,0 +1,52 @@
+---
+# LDAP Authentication module (module_enable_ldap).
+# This module deploys and fully tears down its own LDAP server and OAuth
+# identity provider config as part of the lab itself
+# (content/modules/ROOT/pages/module-07-ldap-authentication.adoc) -- there's
+# no persistent LDAP infrastructure to healthcheck between learner runs.
+#
+# No e2e sequence is provided for this module: `oc adm groups sync` and the
+# OAuth identity provider list on oauth/cluster are cluster-wide singletons
+# shared by any concurrent learner on the same claim, so an automated e2e run
+# reconfiguring them isn't safe to run outside a learner's own guided,
+# self-cleaning session. The healthcheck below only confirms the
+# authentication plane itself (which the module's OAuth changes depend on)
+# is healthy.
+
+- name: "Ldap | Authentication ClusterOperator is healthy"
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: ClusterOperator
+    name: authentication
+  register: hc_ldap_operator
+  ignore_errors: true
+
+- name: "Ldap | Record failure if authentication ClusterOperator is not Available"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['ldap: authentication ClusterOperator not Available'] }}"
+  when: >-
+    hc_ldap_operator is failed or
+    hc_ldap_operator.resources | default([]) | length == 0 or
+    (
+      hc_ldap_operator.resources[0].status.conditions | default([])
+      | selectattr('type', 'equalto', 'Available')
+      | selectattr('status', 'equalto', 'True')
+      | list | length == 0
+    )
+
+- name: "Ldap | oauth-openshift pods are Running"
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: openshift-authentication
+    label_selectors:
+      - app=oauth-openshift
+  register: hc_ldap_oauth_pods
+  ignore_errors: true
+
+- name: "Ldap | Record failure if no Running oauth-openshift pods found"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['ldap: no Running oauth-openshift pods found in openshift-authentication'] }}"
+  when: >-
+    hc_ldap_oauth_pods is failed or
+    hc_ldap_oauth_pods.resources | selectattr('status.phase', 'equalto', 'Running') | list | length == 0

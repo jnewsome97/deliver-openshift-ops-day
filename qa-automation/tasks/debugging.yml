@@ -1,0 +1,34 @@
+---
+# Debugging & Troubleshooting module (module_enable_debugging).
+# No dedicated workload -- the module deploys intentionally-broken apps into
+# a debug-lab namespace the learner creates and cleans up themselves
+# (content/modules/ROOT/pages/module-05-debugging-troubleshooting.adoc). The
+# only always-on capability to check is that the LimitRange/ResourceQuota and
+# SCC machinery the module's fixes depend on is actually present.
+
+- name: "Debugging | Confirm LimitRange/ResourceQuota APIs are served"
+  ansible.builtin.command: oc api-resources --api-group=""
+  register: hc_debugging_core_api
+  changed_when: false
+  ignore_errors: true
+
+- name: "Debugging | Record failure if LimitRange or ResourceQuota API is missing"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['debugging: core v1 limitranges/resourcequotas API not available'] }}"
+  when: >-
+    hc_debugging_core_api is failed or
+    'limitranges' not in hc_debugging_core_api.stdout or
+    'resourcequotas' not in hc_debugging_core_api.stdout
+
+- name: "Debugging | Confirm restricted-v2 SCC exists"
+  kubernetes.core.k8s_info:
+    api_version: security.openshift.io/v1
+    kind: SecurityContextConstraints
+    name: restricted-v2
+  register: hc_debugging_scc
+  ignore_errors: true
+
+- name: "Debugging | Record failure if restricted-v2 SCC is missing"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['debugging: restricted-v2 SecurityContextConstraints not found'] }}"
+  when: hc_debugging_scc is failed or hc_debugging_scc.resources | default([]) | length == 0

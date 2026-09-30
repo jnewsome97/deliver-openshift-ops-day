@@ -1,0 +1,266 @@
+---
+# Application Management module (module_enable_appmgmt).
+# Solve/validate sequence for content/modules/ROOT/pages/module-02-app-management.adoc:
+# deploy, expose, scale, self-heal, break/fix a readiness probe, and enforce
+# a PodDisruptionBudget. Uses qa-e2e-app-management instead of the module's
+# own app-management project name so this can never collide with a live
+# learner on the same page.
+
+- name: "Appmgmt | Delete qa-e2e-app-management project"
+  kubernetes.core.k8s:
+    state: absent
+    api_version: project.openshift.io/v1
+    kind: Project
+    name: qa-e2e-app-management
+
+- name: "Appmgmt | Wait for qa-e2e-app-management project to be deleted"
+  ansible.builtin.command: oc get project qa-e2e-app-management
+  register: command_r
+  until: command_r.rc == 1
+  failed_when: false
+  retries: 10
+  delay: 5
+
+- name: "Appmgmt | Run deploy/scale/self-heal/probe/PDB sequence"
+  block:
+    - name: "Appmgmt | Create qa-e2e-app-management project"
+      kubernetes.core.k8s:
+        state: present
+        api_version: project.openshift.io/v1
+        kind: Project
+        name: qa-e2e-app-management
+
+    - name: "Appmgmt | Deploy weathernow app and service"
+      kubernetes.core.k8s:
+        state: present
+        definition: "{{ item }}"
+      loop:
+        - apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: weathernow
+            namespace: qa-e2e-app-management
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: weathernow
+            template:
+              metadata:
+                labels:
+                  app: weathernow
+              spec:
+                containers:
+                  - name: weathernow
+                    image: quay.io/openshift-workshop-applications/weathernow:latest
+                    ports:
+                      - containerPort: 8080
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: weathernow
+            namespace: qa-e2e-app-management
+          spec:
+            selector:
+              app: weathernow
+            ports:
+              - port: 8080
+                targetPort: 8080
+
+    - name: "Appmgmt | Wait for weathernow to roll out"
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: weathernow
+        namespace: qa-e2e-app-management
+      register: e2e_appmgmt_deploy
+      until: >-
+        e2e_appmgmt_deploy.resources | default([]) | length > 0 and
+        (e2e_appmgmt_deploy.resources[0].status.readyReplicas | default(0)) >= 1
+      retries: 24
+      delay: 5
+
+    - name: "Appmgmt | Scale to 3 replicas"
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: weathernow
+            namespace: qa-e2e-app-management
+          spec:
+            replicas: 3
+
+    - name: "Appmgmt | Wait for 3 ready replicas"
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: weathernow
+        namespace: qa-e2e-app-management
+      register: e2e_appmgmt_scaled
+      until: (e2e_appmgmt_scaled.resources[0].status.readyReplicas | default(0)) >= 3
+      retries: 24
+      delay: 5
+
+    - name: "Appmgmt | Get a running weathernow pod to delete for self-heal test"
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: qa-e2e-app-management
+        label_selectors:
+          - app=weathernow
+      register: e2e_appmgmt_pods_before
+
+    - name: "Appmgmt | Delete one pod to trigger self-heal"
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: Pod
+        name: "{{ e2e_appmgmt_pods_before.resources[0].metadata.name }}"
+        namespace: qa-e2e-app-management
+
+    - name: "Appmgmt | Confirm self-heal restores 3 ready replicas"
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: weathernow
+        namespace: qa-e2e-app-management
+      register: e2e_appmgmt_healed
+      until: (e2e_appmgmt_healed.resources[0].status.readyReplicas | default(0)) >= 3
+      retries: 24
+      delay: 5
+
+    - name: "Appmgmt | Break readiness probe (wrong port)"
+      kubernetes.core.k8s:
+        state: patched
+        api_version: apps/v1
+        kind: Deployment
+        name: weathernow
+        namespace: qa-e2e-app-management
+        definition:
+          spec:
+            template:
+              spec:
+                containers:
+                  - name: weathernow
+                    readinessProbe:
+                      tcpSocket:
+                        port: 9999
+                      initialDelaySeconds: 5
+                      periodSeconds: 5
+
+    - name: "Appmgmt | Confirm the broken probe leaves pods not-ready"
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: qa-e2e-app-management
+        label_selectors:
+          - app=weathernow
+      register: e2e_appmgmt_broken
+      until: >-
+        e2e_appmgmt_broken.resources | default([]) | length > 0 and
+        e2e_appmgmt_broken.resources
+        | selectattr('status.containerStatuses', 'defined')
+        | selectattr('status.containerStatuses.0.ready', 'equalto', false)
+        | list | length > 0
+      retries: 12
+      delay: 5
+
+    - name: "Appmgmt | Fix readiness probe (correct port) and add liveness probe"
+      kubernetes.core.k8s:
+        state: patched
+        api_version: apps/v1
+        kind: Deployment
+        name: weathernow
+        namespace: qa-e2e-app-management
+        definition:
+          spec:
+            template:
+              spec:
+                containers:
+                  - name: weathernow
+                    readinessProbe:
+                      tcpSocket:
+                        port: 8080
+                      initialDelaySeconds: 5
+                      periodSeconds: 10
+                    livenessProbe:
+                      tcpSocket:
+                        port: 8080
+                      initialDelaySeconds: 15
+                      periodSeconds: 20
+
+    - name: "Appmgmt | Confirm fixed probe brings pods back to Ready"
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: weathernow
+        namespace: qa-e2e-app-management
+      register: e2e_appmgmt_fixed
+      until: (e2e_appmgmt_fixed.resources[0].status.readyReplicas | default(0)) >= 3
+      retries: 24
+      delay: 5
+
+    - name: "Appmgmt | Create PodDisruptionBudget (minAvailable=2)"
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: policy/v1
+          kind: PodDisruptionBudget
+          metadata:
+            name: weathernow
+            namespace: qa-e2e-app-management
+          spec:
+            minAvailable: 2
+            selector:
+              matchLabels:
+                app: weathernow
+
+    - name: "Appmgmt | Confirm PDB allows one disruption with 3 replicas"
+      kubernetes.core.k8s_info:
+        api_version: policy/v1
+        kind: PodDisruptionBudget
+        name: weathernow
+        namespace: qa-e2e-app-management
+      register: e2e_appmgmt_pdb
+      until: (e2e_appmgmt_pdb.resources[0].status.disruptionsAllowed | default(-1)) >= 1
+      retries: 12
+      delay: 5
+
+    - name: "Appmgmt | Set minAvailable to replica count to block disruptions"
+      kubernetes.core.k8s:
+        state: patched
+        api_version: policy/v1
+        kind: PodDisruptionBudget
+        name: weathernow
+        namespace: qa-e2e-app-management
+        definition:
+          spec:
+            minAvailable: 3
+
+    - name: "Appmgmt | Confirm PDB now blocks all disruptions"
+      kubernetes.core.k8s_info:
+        api_version: policy/v1
+        kind: PodDisruptionBudget
+        name: weathernow
+        namespace: qa-e2e-app-management
+      register: e2e_appmgmt_pdb_blocked
+      until: (e2e_appmgmt_pdb_blocked.resources[0].status.disruptionsAllowed | default(-1)) == 0
+      retries: 12
+      delay: 5
+  always:
+    - name: "Appmgmt | Delete qa-e2e-app-management project"
+      kubernetes.core.k8s:
+        state: absent
+        api_version: project.openshift.io/v1
+        kind: Project
+        name: qa-e2e-app-management
+
+    - name: "Appmgmt | Wait for qa-e2e-app-management project to be deleted"
+      ansible.builtin.command: oc get project qa-e2e-app-management
+      register: command_r
+      until: command_r.rc == 1
+      failed_when: false
+      retries: 10
+      delay: 5

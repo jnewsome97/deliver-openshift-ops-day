@@ -1,0 +1,29 @@
+---
+# Application Management module (module_enable_appmgmt).
+# No dedicated workload -- this module teaches the core deploy/expose/scale/
+# self-heal/probe/PDB workflow against apps the learner creates themselves
+# (content/modules/ROOT/pages/module-02-app-management.adoc). The only
+# always-on capability to check is that the platform APIs the module relies
+# on are actually served.
+
+- name: "Appmgmt | Confirm route.openshift.io API is served"
+  ansible.builtin.command: oc api-resources --api-group=route.openshift.io
+  register: hc_appmgmt_route_api
+  changed_when: false
+  ignore_errors: true
+
+- name: "Appmgmt | Record failure if route.openshift.io API is unavailable"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['appmgmt: route.openshift.io API group not available'] }}"
+  when: hc_appmgmt_route_api is failed or 'routes' not in hc_appmgmt_route_api.stdout
+
+- name: "Appmgmt | Confirm policy/v1 PodDisruptionBudget API is served"
+  ansible.builtin.command: oc api-resources --api-group=policy
+  register: hc_appmgmt_pdb_api
+  changed_when: false
+  ignore_errors: true
+
+- name: "Appmgmt | Record failure if PodDisruptionBudget API is unavailable"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['appmgmt: policy/v1 poddisruptionbudgets API not available'] }}"
+  when: hc_appmgmt_pdb_api is failed or 'poddisruptionbudgets' not in hc_appmgmt_pdb_api.stdout

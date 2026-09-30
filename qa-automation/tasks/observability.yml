@@ -1,0 +1,79 @@
+---
+# Observability & Logging module (module_enable_observability).
+# Confirms the built-in Prometheus/Alertmanager stack
+# content/modules/ROOT/pages/module-09-observability.adoc explores is up.
+# Also checks for the observability UIPlugin CRs pre-created at provisioning
+# time (see automation/ansible/roles/ocp4_workload_days_ops_track/tasks/workload.yml,
+# "Pre-create observability UIPlugin CRs to prevent console rollout during
+# lab") -- those exist specifically so the module's later `oc apply` for the
+# Logging/DistributedTracing UIPlugins doesn't trigger a console pod restart
+# mid-lab, so their absence would silently break that part of the module.
+
+- name: "Observability | Prometheus pods are Running"
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: openshift-monitoring
+    label_selectors:
+      - app.kubernetes.io/name=prometheus
+  register: hc_observability_prom
+  ignore_errors: true
+
+- name: "Observability | Record failure if no Running Prometheus pods found"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['observability: no Running Prometheus pods found in openshift-monitoring'] }}"
+  when: >-
+    hc_observability_prom is failed or
+    hc_observability_prom.resources | selectattr('status.phase', 'equalto', 'Running') | list | length == 0
+
+- name: "Observability | Alertmanager pods are Running"
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: openshift-monitoring
+    label_selectors:
+      - app.kubernetes.io/name=alertmanager
+  register: hc_observability_am
+  ignore_errors: true
+
+- name: "Observability | Record failure if no Running Alertmanager pods found"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['observability: no Running Alertmanager pods found in openshift-monitoring'] }}"
+  when: >-
+    hc_observability_am is failed or
+    hc_observability_am.resources | selectattr('status.phase', 'equalto', 'Running') | list | length == 0
+
+- name: "Observability | Monitoring ClusterOperator is healthy"
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: ClusterOperator
+    name: monitoring
+  register: hc_observability_operator
+  ignore_errors: true
+
+- name: "Observability | Record failure if monitoring ClusterOperator is not Available"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['observability: monitoring ClusterOperator not Available'] }}"
+  when: >-
+    hc_observability_operator is failed or
+    hc_observability_operator.resources | default([]) | length == 0 or
+    (
+      hc_observability_operator.resources[0].status.conditions | default([])
+      | selectattr('type', 'equalto', 'Available')
+      | selectattr('status', 'equalto', 'True')
+      | list | length == 0
+    )
+
+- name: "Observability | Pre-created UIPlugin CRs are present"
+  kubernetes.core.k8s_info:
+    api_version: observability.openshift.io/v1alpha1
+    kind: UIPlugin
+  register: hc_observability_uiplugins
+  ignore_errors: true
+
+- name: "Observability | Record failure if no UIPlugin CRs found"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['observability: no UIPlugin CRs found (expected pre-created at provisioning time)'] }}"
+  when: >-
+    hc_observability_uiplugins is failed or
+    hc_observability_uiplugins.resources | default([]) | length == 0

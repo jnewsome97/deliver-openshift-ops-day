@@ -58,6 +58,13 @@
     module_enable_acm: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_ACM') | default('true', true) | bool }}"
     module_enable_ztwim: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_ZTWIM') | default('true', true) | bool }}"
     module_enable_vault: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_VAULT') | default('true', true) | bool }}"
+    module_enable_install: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_INSTALL') | default('true', true) | bool }}"
+    module_enable_appmgmt: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_APPMGMT') | default('true', true) | bool }}"
+    module_enable_ingress: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_INGRESS') | default('true', true) | bool }}"
+    module_enable_netsec: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_NETSEC') | default('true', true) | bool }}"
+    module_enable_debugging: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_DEBUGGING') | default('true', true) | bool }}"
+    module_enable_observability: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_OBSERVABILITY') | default('true', true) | bool }}"
+    module_enable_performance: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_PERFORMANCE') | default('true', true) | bool }}"
   tasks:
 
     # -- Module 1: Overview (base content, always runs) ----------------
@@ -103,6 +110,38 @@
     - name: "Vault | Run Vault module e2e sequence"
       ansible.builtin.include_tasks: tasks/e2e/vault.yml
       when: module_enable_security or module_enable_ztwim or module_enable_vault
+
+    - name: "Install | Run installation module e2e sequence"
+      ansible.builtin.include_tasks: tasks/e2e/install.yml
+      when: module_enable_install
+
+    - name: "Appmgmt | Run application management module e2e sequence"
+      ansible.builtin.include_tasks: tasks/e2e/appmgmt.yml
+      when: module_enable_appmgmt
+
+    - name: "Ingress | Run ingress module e2e sequence"
+      ansible.builtin.include_tasks: tasks/e2e/ingress.yml
+      when: module_enable_ingress
+
+    - name: "Netsec | Run network security module e2e sequence"
+      ansible.builtin.include_tasks: tasks/e2e/netsec.yml
+      when: module_enable_netsec
+
+    - name: "Debugging | Run debugging module e2e sequence"
+      ansible.builtin.include_tasks: tasks/e2e/debugging.yml
+      when: module_enable_debugging
+
+    # ldap and oidc have no e2e sequence -- see tasks/ldap.yml and
+    # tasks/oidc.yml for why (cluster-wide oauth/cluster singleton, not
+    # safe to mutate outside a learner's own guided session).
+
+    - name: "Observability | Run observability module e2e sequence"
+      ansible.builtin.include_tasks: tasks/e2e/observability.yml
+      when: module_enable_observability
+
+    - name: "Performance | Run performance tuning module e2e sequence"
+      ansible.builtin.include_tasks: tasks/e2e/performance.yml
+      when: module_enable_performance
 
     # -- Report ------------------------------------------------------------
     # acm.yml and ztwim.yml accumulate into hc_failures (same pattern as

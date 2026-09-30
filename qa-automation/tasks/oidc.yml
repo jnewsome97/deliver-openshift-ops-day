@@ -1,0 +1,46 @@
+---
+# OIDC Authentication module (module_enable_oidc).
+# Same reasoning as tasks/ldap.yml: this module deploys and tears down its
+# own Keycloak instance and OAuth identity provider config as part of the lab
+# itself (content/modules/ROOT/pages/module-08-oidc-authentication.adoc), and
+# oauth/cluster is a cluster-wide singleton shared by any concurrent learner
+# -- no persistent OIDC infrastructure to healthcheck, and no e2e sequence
+# that would be safe to run outside a learner's own guided session.
+
+- name: "Oidc | Authentication ClusterOperator is healthy"
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: ClusterOperator
+    name: authentication
+  register: hc_oidc_operator
+  ignore_errors: true
+
+- name: "Oidc | Record failure if authentication ClusterOperator is not Available"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['oidc: authentication ClusterOperator not Available'] }}"
+  when: >-
+    hc_oidc_operator is failed or
+    hc_oidc_operator.resources | default([]) | length == 0 or
+    (
+      hc_oidc_operator.resources[0].status.conditions | default([])
+      | selectattr('type', 'equalto', 'Available')
+      | selectattr('status', 'equalto', 'True')
+      | list | length == 0
+    )
+
+- name: "Oidc | oauth-openshift pods are Running"
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: openshift-authentication
+    label_selectors:
+      - app=oauth-openshift
+  register: hc_oidc_oauth_pods
+  ignore_errors: true
+
+- name: "Oidc | Record failure if no Running oauth-openshift pods found"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['oidc: no Running oauth-openshift pods found in openshift-authentication'] }}"
+  when: >-
+    hc_oidc_oauth_pods is failed or
+    hc_oidc_oauth_pods.resources | selectattr('status.phase', 'equalto', 'Running') | list | length == 0

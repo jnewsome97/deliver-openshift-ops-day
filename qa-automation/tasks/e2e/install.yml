@@ -1,0 +1,195 @@
+---
+# Installation & Verification module (module_enable_install).
+# Solve/validate sequence for content/modules/ROOT/pages/module-01-installation.adoc's
+# hands-on sections: deploy an app+route (networking/DNS/TLS) and a PVC-backed
+# pod (dynamic storage), the same two proof points the module has the learner run.
+#
+# Uses qa-e2e-prefixed project names so this can never collide with a live
+# learner working through install-test/storage-test on the same page.
+
+- name: "Install | Delete qa-e2e-install-test project"
+  kubernetes.core.k8s:
+    state: absent
+    api_version: project.openshift.io/v1
+    kind: Project
+    name: qa-e2e-install-test
+
+- name: "Install | Wait for qa-e2e-install-test project to be deleted"
+  ansible.builtin.command: oc get project qa-e2e-install-test
+  register: command_r
+  until: command_r.rc == 1
+  failed_when: false
+  retries: 10
+  delay: 5
+
+- name: "Install | Create, validate, and clean up qa-e2e-install-test"
+  block:
+    - name: "Install | Create qa-e2e-install-test project"
+      kubernetes.core.k8s:
+        state: present
+        api_version: project.openshift.io/v1
+        kind: Project
+        name: qa-e2e-install-test
+
+    - name: "Install | Deploy test-app, PVC, and storage-writer pod"
+      kubernetes.core.k8s:
+        state: present
+        definition: "{{ item }}"
+      loop:
+        - apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: test-app
+            namespace: qa-e2e-install-test
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: test-app
+            template:
+              metadata:
+                labels:
+                  app: test-app
+              spec:
+                containers:
+                  - name: test-app
+                    image: registry.access.redhat.com/ubi9/httpd-24
+                    ports:
+                      - containerPort: 8080
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: test-app
+            namespace: qa-e2e-install-test
+          spec:
+            selector:
+              app: test-app
+            ports:
+              - port: 8080
+                targetPort: 8080
+        - apiVersion: route.openshift.io/v1
+          kind: Route
+          metadata:
+            name: test-app
+            namespace: qa-e2e-install-test
+          spec:
+            to:
+              kind: Service
+              name: test-app
+            tls:
+              termination: edge
+        - apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: test-pvc
+            namespace: qa-e2e-install-test
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 1Gi
+        - apiVersion: v1
+          kind: Pod
+          metadata:
+            name: test-storage
+            namespace: qa-e2e-install-test
+          spec:
+            containers:
+              - name: test
+                image: registry.access.redhat.com/ubi9/ubi-minimal
+                command: ["/bin/sh", "-c", "echo 'Storage works!' > /data/test.txt && sleep 30"]
+                volumeMounts:
+                  - name: data
+                    mountPath: /data
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  runAsNonRoot: true
+                  capabilities:
+                    drop: ["ALL"]
+                  seccompProfile:
+                    type: RuntimeDefault
+            volumes:
+              - name: data
+                persistentVolumeClaim:
+                  claimName: test-pvc
+            restartPolicy: Never
+
+    - name: "Install | Wait for test-app Deployment to roll out"
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: test-app
+        namespace: qa-e2e-install-test
+      register: e2e_install_deploy
+      until: >-
+        e2e_install_deploy.resources | default([]) | length > 0 and
+        (e2e_install_deploy.resources[0].status.readyReplicas | default(0)) >= 1
+      retries: 24
+      delay: 5
+
+    - name: "Install | Wait for Route to admit"
+      kubernetes.core.k8s_info:
+        api_version: route.openshift.io/v1
+        kind: Route
+        name: test-app
+        namespace: qa-e2e-install-test
+      register: e2e_install_route
+      until: >-
+        e2e_install_route.resources | default([]) | length > 0 and
+        e2e_install_route.resources[0].status.ingress | default([]) | length > 0
+      retries: 12
+      delay: 5
+
+    - name: "Install | curl the route to prove DNS/router/TLS work end-to-end"
+      ansible.builtin.uri:
+        url: "https://{{ e2e_install_route.resources[0].spec.host }}"
+        validate_certs: false
+        status_code: [200, 403]
+      register: e2e_install_curl
+      retries: 10
+      delay: 5
+      until: e2e_install_curl is success
+
+    - name: "Install | Wait for test-storage pod to complete"
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        name: test-storage
+        namespace: qa-e2e-install-test
+      register: e2e_install_pod
+      until: >-
+        e2e_install_pod.resources | default([]) | length > 0 and
+        e2e_install_pod.resources[0].status.phase | default('') in ['Running', 'Succeeded']
+      retries: 24
+      delay: 5
+
+    - name: "Install | Confirm the PVC bound"
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: PersistentVolumeClaim
+        name: test-pvc
+        namespace: qa-e2e-install-test
+      register: e2e_install_pvc
+
+    - name: "Install | Fail if PVC did not bind"
+      ansible.builtin.fail:
+        msg: "install e2e: test-pvc did not reach Bound in qa-e2e-install-test"
+      when: >-
+        e2e_install_pvc.resources | default([]) | length == 0 or
+        e2e_install_pvc.resources[0].status.phase | default('') != 'Bound'
+  always:
+    - name: "Install | Delete qa-e2e-install-test project"
+      kubernetes.core.k8s:
+        state: absent
+        api_version: project.openshift.io/v1
+        kind: Project
+        name: qa-e2e-install-test
+
+    - name: "Install | Wait for qa-e2e-install-test project to be deleted"
+      ansible.builtin.command: oc get project qa-e2e-install-test
+      register: command_r
+      until: command_r.rc == 1
+      failed_when: false
+      retries: 10
+      delay: 5

@@ -1,0 +1,40 @@
+---
+# Performance Tuning module (module_enable_performance).
+# Confirms the built-in metrics pipeline content/modules/ROOT/pages/module-10-performance-tuning.adoc
+# depends on (HorizontalPodAutoscaler needs the metrics.k8s.io API to be
+# served by an actual metrics-server/Prometheus adapter, or every HPA in the
+# module will sit at <unknown> and the lab can't be completed).
+
+- name: "Performance | metrics.k8s.io API is served"
+  ansible.builtin.command: oc api-resources --api-group=metrics.k8s.io
+  register: hc_performance_metrics_api
+  ignore_errors: true
+  changed_when: false
+
+- name: "Performance | Record failure if metrics.k8s.io API is not served"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['performance: metrics.k8s.io API not served (HPA cannot function)'] }}"
+  when: >-
+    hc_performance_metrics_api is failed or
+    'pods' not in hc_performance_metrics_api.stdout
+
+- name: "Performance | monitoring ClusterOperator is healthy"
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: ClusterOperator
+    name: monitoring
+  register: hc_performance_operator
+  ignore_errors: true
+
+- name: "Performance | Record failure if monitoring ClusterOperator is not Available"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['performance: monitoring ClusterOperator not Available'] }}"
+  when: >-
+    hc_performance_operator is failed or
+    hc_performance_operator.resources | default([]) | length == 0 or
+    (
+      hc_performance_operator.resources[0].status.conditions | default([])
+      | selectattr('type', 'equalto', 'Available')
+      | selectattr('status', 'equalto', 'True')
+      | list | length == 0
+    )

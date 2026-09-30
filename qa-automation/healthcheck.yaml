@@ -48,6 +48,15 @@
     module_enable_acm: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_ACM') | default('true', true) | bool }}"
     module_enable_ztwim: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_ZTWIM') | default('true', true) | bool }}"
     module_enable_vault: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_VAULT') | default('true', true) | bool }}"
+    module_enable_install: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_INSTALL') | default('true', true) | bool }}"
+    module_enable_appmgmt: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_APPMGMT') | default('true', true) | bool }}"
+    module_enable_ingress: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_INGRESS') | default('true', true) | bool }}"
+    module_enable_netsec: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_NETSEC') | default('true', true) | bool }}"
+    module_enable_debugging: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_DEBUGGING') | default('true', true) | bool }}"
+    module_enable_ldap: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_LDAP') | default('true', true) | bool }}"
+    module_enable_oidc: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_OIDC') | default('true', true) | bool }}"
+    module_enable_observability: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_OBSERVABILITY') | default('true', true) | bool }}"
+    module_enable_performance: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_PERFORMANCE') | default('true', true) | bool }}"
   tasks:
 
     # -- Base checks (always run) --------------------------------------
@@ -169,6 +178,42 @@
     - name: "Vault | Run Vault module checks"
       ansible.builtin.include_tasks: tasks/vault.yml
       when: module_enable_security or module_enable_ztwim or module_enable_vault
+
+    - name: "Install | Run installation module checks"
+      ansible.builtin.include_tasks: tasks/install.yml
+      when: module_enable_install
+
+    - name: "Appmgmt | Run application management module checks"
+      ansible.builtin.include_tasks: tasks/appmgmt.yml
+      when: module_enable_appmgmt
+
+    - name: "Ingress | Run ingress module checks"
+      ansible.builtin.include_tasks: tasks/ingress.yml
+      when: module_enable_ingress
+
+    - name: "Netsec | Run network security module checks"
+      ansible.builtin.include_tasks: tasks/netsec.yml
+      when: module_enable_netsec
+
+    - name: "Debugging | Run debugging module checks"
+      ansible.builtin.include_tasks: tasks/debugging.yml
+      when: module_enable_debugging
+
+    - name: "Ldap | Run LDAP authentication module checks"
+      ansible.builtin.include_tasks: tasks/ldap.yml
+      when: module_enable_ldap
+
+    - name: "Oidc | Run OIDC authentication module checks"
+      ansible.builtin.include_tasks: tasks/oidc.yml
+      when: module_enable_oidc
+
+    - name: "Observability | Run observability module checks"
+      ansible.builtin.include_tasks: tasks/observability.yml
+      when: module_enable_observability
+
+    - name: "Performance | Run performance tuning module checks"
+      ansible.builtin.include_tasks: tasks/performance.yml
+      when: module_enable_performance
 
     # -- Report ----------------------------------------------------------
 

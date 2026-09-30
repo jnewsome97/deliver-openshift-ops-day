@@ -1,0 +1,201 @@
+---
+# Debugging & Troubleshooting module (module_enable_debugging).
+# Solve/validate sequence covering two of the six broken-app scenarios from
+# content/modules/ROOT/pages/module-05-debugging-troubleshooting.adoc:
+# ImagePullBackOff (bad tag -> set correct tag) and a CreateContainerConfigError
+# (missing ConfigMap -> create it). These two are representative, fast,
+# deterministic fixes; the other four (resource-constraint, CrashLoopBackOff,
+# service-selector-mismatch, SCC permission-denied) follow the same
+# diagnose/fix/verify pattern and aren't re-tested here to keep e2e runtime
+# reasonable.
+#
+# Uses qa-e2e-debug-lab instead of the module's own debug-lab namespace so
+# this can never collide with a live learner on the same page.
+
+- name: "Debugging | Delete qa-e2e-debug-lab project"
+  kubernetes.core.k8s:
+    state: absent
+    api_version: project.openshift.io/v1
+    kind: Project
+    name: qa-e2e-debug-lab
+
+- name: "Debugging | Wait for qa-e2e-debug-lab project to be deleted"
+  ansible.builtin.command: oc get project qa-e2e-debug-lab
+  register: command_r
+  until: command_r.rc == 1
+  failed_when: false
+  retries: 10
+  delay: 5
+
+- name: "Debugging | Run ImagePullBackOff and CreateContainerConfigError fix sequence"
+  block:
+    - name: "Debugging | Create qa-e2e-debug-lab project"
+      kubernetes.core.k8s:
+        state: present
+        api_version: project.openshift.io/v1
+        kind: Project
+        name: qa-e2e-debug-lab
+
+    - name: "Debugging | Deploy weather-frontend with a bad image tag"
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: weather-frontend
+            namespace: qa-e2e-debug-lab
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: weather-frontend
+            template:
+              metadata:
+                labels:
+                  app: weather-frontend
+              spec:
+                containers:
+                  - name: weather-frontend
+                    image: quay.io/openshift-workshop-applications/weather-debug-app:9.9
+
+    - name: "Debugging | Deploy weather-backend referencing a missing ConfigMap"
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: weather-backend
+            namespace: qa-e2e-debug-lab
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: weather-backend
+            template:
+              metadata:
+                labels:
+                  app: weather-backend
+              spec:
+                containers:
+                  - name: weather-backend
+                    image: registry.access.redhat.com/ubi9/ubi-minimal
+                    command: ["/bin/sh", "-c", "sleep 3600"]
+                    envFrom:
+                      - configMapRef:
+                          name: weather-config
+
+    - name: "Debugging | Confirm weather-frontend hits ImagePullBackOff"
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: qa-e2e-debug-lab
+        label_selectors:
+          - app=weather-frontend
+      register: e2e_debugging_frontend_broken
+      until: >-
+        e2e_debugging_frontend_broken.resources | default([]) | length > 0 and
+        e2e_debugging_frontend_broken.resources[0].status.containerStatuses | default([]) | length > 0 and
+        (
+          e2e_debugging_frontend_broken.resources[0].status.containerStatuses[0].state.waiting.reason | default('')
+          in ['ImagePullBackOff', 'ErrImagePull']
+        )
+      retries: 12
+      delay: 5
+
+    - name: "Debugging | Confirm weather-backend hits CreateContainerConfigError"
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: qa-e2e-debug-lab
+        label_selectors:
+          - app=weather-backend
+      register: e2e_debugging_backend_broken
+      until: >-
+        e2e_debugging_backend_broken.resources | default([]) | length > 0 and
+        e2e_debugging_backend_broken.resources[0].status.containerStatuses | default([]) | length > 0 and
+        e2e_debugging_backend_broken.resources[0].status.containerStatuses[0].state.waiting.reason | default('')
+        == 'CreateContainerConfigError'
+      retries: 12
+      delay: 5
+
+    - name: "Debugging | Fix weather-frontend image tag"
+      kubernetes.core.k8s:
+        state: patched
+        api_version: apps/v1
+        kind: Deployment
+        name: weather-frontend
+        namespace: qa-e2e-debug-lab
+        definition:
+          spec:
+            template:
+              spec:
+                containers:
+                  - name: weather-frontend
+                    image: quay.io/openshift-workshop-applications/weather-debug-app:latest
+
+    - name: "Debugging | Create the missing weather-config ConfigMap"
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: weather-config
+            namespace: qa-e2e-debug-lab
+          data:
+            API_ENDPOINT: "http://weather-api:8080"
+            CACHE_TTL: "300"
+
+    - name: "Debugging | Delete weather-backend pod so it picks up the new ConfigMap"
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: Pod
+        namespace: qa-e2e-debug-lab
+        label_selectors:
+          - app=weather-backend
+
+    - name: "Debugging | Confirm weather-frontend reaches Running"
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: qa-e2e-debug-lab
+        label_selectors:
+          - app=weather-frontend
+      register: e2e_debugging_frontend_fixed
+      until: >-
+        e2e_debugging_frontend_fixed.resources | default([]) | length > 0 and
+        e2e_debugging_frontend_fixed.resources[0].status.phase | default('') == 'Running'
+      retries: 24
+      delay: 5
+
+    - name: "Debugging | Confirm weather-backend reaches Running"
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: qa-e2e-debug-lab
+        label_selectors:
+          - app=weather-backend
+      register: e2e_debugging_backend_fixed
+      until: >-
+        e2e_debugging_backend_fixed.resources | default([]) | length > 0 and
+        e2e_debugging_backend_fixed.resources[0].status.phase | default('') == 'Running'
+      retries: 24
+      delay: 5
+  always:
+    - name: "Debugging | Delete qa-e2e-debug-lab project"
+      kubernetes.core.k8s:
+        state: absent
+        api_version: project.openshift.io/v1
+        kind: Project
+        name: qa-e2e-debug-lab
+
+    - name: "Debugging | Wait for qa-e2e-debug-lab project to be deleted"
+      ansible.builtin.command: oc get project qa-e2e-debug-lab
+      register: command_r
+      until: command_r.rc == 1
+      failed_when: false
+      retries: 10
+      delay: 5

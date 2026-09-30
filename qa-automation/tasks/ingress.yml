@@ -1,0 +1,42 @@
+---
+# Ingress & Load Balancing module (module_enable_ingress).
+# Confirms the default IngressController and its router pods -- the stock
+# infrastructure content/modules/ROOT/pages/module-03-ingress-load-balancing.adoc
+# inspects and builds test Routes on top of -- are actually up.
+
+- name: "Ingress | Get default IngressController"
+  kubernetes.core.k8s_info:
+    api_version: operator.openshift.io/v1
+    kind: IngressController
+    name: default
+    namespace: openshift-ingress-operator
+  register: hc_ingress_controller
+  ignore_errors: true
+
+- name: "Ingress | Record failure if default IngressController is missing or not Available"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['ingress: default IngressController not Available'] }}"
+  when: >-
+    hc_ingress_controller is failed or
+    hc_ingress_controller.resources | default([]) | length == 0 or
+    (
+      hc_ingress_controller.resources[0].status.conditions | default([])
+      | selectattr('type', 'equalto', 'Available')
+      | selectattr('status', 'equalto', 'True')
+      | list | length == 0
+    )
+
+- name: "Ingress | Get router pods"
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: openshift-ingress
+  register: hc_ingress_pods
+  ignore_errors: true
+
+- name: "Ingress | Record failure if no Running router pods found"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['ingress: no Running router pods found in openshift-ingress'] }}"
+  when: >-
+    hc_ingress_pods is failed or
+    hc_ingress_pods.resources | selectattr('status.phase', 'equalto', 'Running') | list | length == 0
