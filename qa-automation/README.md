@@ -1,6 +1,6 @@
 # qa-automation
 
-## healthcheck.yaml
+## healthcheck.yml
 
 Post-provision readiness check (< 60s). Confirms the base environment is
 functional (monorepo cloned, logged in to the cluster, Showroom pod running,
@@ -32,7 +32,7 @@ corresponding task file here.
 **Provisioning bundles don't match the module flags 1:1** — a few of
 `common.yaml`'s workload groups are triggered by a different flag (or an OR
 of several) than the task file's own name suggests, so the `when:` gates in
-`healthcheck.yaml` deliberately don't just mirror `module_enable_<name>`:
+`healthcheck.yml` deliberately don't just mirror `module_enable_<name>`:
 
 - `module_enable_security`, `_ztwim`, and `_vault` all gate the *same*
   `_security_workloads` list (RHACS + console-embed + compliance-operator +
@@ -64,10 +64,10 @@ fixed-stack workshop.
 
 Exit 0 = healthy, non-zero = unhealthy (message lists every failure found).
 
-## e2e.yaml
+## e2e.yml
 
 Full end-to-end run of each module's solve + validate sequence. Unlike
-`healthcheck.yaml`, this is **not** read-only — task files under `tasks/e2e/`
+`healthcheck.yml`, this is **not** read-only — task files under `tasks/e2e/`
 create and clean up real resources (e.g. Module 1's `qa-e2e-quick-demo`
 project with an httpd deployment) to simulate what a learner would actually
 do.
@@ -81,11 +81,11 @@ project, for example) so an e2e run can never collide with — or delete — a
 real learner's in-progress work on the same claim. Keep this in mind when
 authoring e2e content for the remaining modules.
 
-It uses the same module-aware structure as `healthcheck.yaml`: the same
+It uses the same module-aware structure as `healthcheck.yml`: the same
 `MODULE_ENABLE_*` env vars are read into `module_enable_*` vars, and each
 module's sequence lives in its own `tasks/e2e/<module>.yml`, included only
 when that module is enabled for the claim, with the same bundling gates as
-`healthcheck.yaml` (`security`/`ztwim`/`vault` share one OR gate; `virt`/
+`healthcheck.yml` (`security`/`ztwim`/`vault` share one OR gate; `virt`/
 `gitops` are also gated on `module_enable_acm`).
 
 Module 1 (Overview, `tasks/e2e/overview.yml`) is base content shown on every
@@ -113,7 +113,7 @@ the real learner resource already exists, or validates a safe, isolatable
 subset of the same mechanism instead of reproducing the exercise verbatim.
 
 `acm.yml` and `ztwim.yml` accumulate into the same `hc_failures` list
-`e2e.yaml` reports at the end (same pattern as `healthcheck.yaml`); the other
+`e2e.yml` reports at the end (same pattern as `healthcheck.yml`); the other
 module files fail fast via `failed_when`, matching `tasks/e2e/overview.yml`'s
 existing style.
 
@@ -151,11 +151,11 @@ default `ClusterSPIFFEID`'s namespace selector is corrected on-cluster.
 
 ```bash
 # From the repo root, kubeconfig already selected for the claim:
-ansible-playbook qa-automation/healthcheck.yaml
-ansible-playbook qa-automation/e2e.yaml
+ansible-playbook qa-automation/healthcheck.yml
+ansible-playbook qa-automation/e2e.yml
 
-ansible-playbook --syntax-check qa-automation/healthcheck.yaml
-ansible-playbook --syntax-check qa-automation/e2e.yaml
+ansible-playbook --syntax-check qa-automation/healthcheck.yml
+ansible-playbook --syntax-check qa-automation/e2e.yml
 ```
 
 Requires `oc` on PATH and access to the runtime-automation kubeconfig (or

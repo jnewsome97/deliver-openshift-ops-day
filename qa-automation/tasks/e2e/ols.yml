@@ -1,6 +1,6 @@
 ---
 # OpenShift Lightspeed module (module_enable_ols).
-# healthcheck.yaml's tasks/ols.yml already confirms OLSConfig/cluster and the
+# healthcheck.yml's tasks/ols.yml already confirms OLSConfig/cluster and the
 # lightspeed-app-server Deployment are ready -- this file exercises the
 # actual hands-on flow from content/modules/ROOT/pages/module-13-lightspeed.adoc:
 # asking Lightspeed a real question and getting back a real, RAG-grounded
