@@ -1,0 +1,21 @@
+---
+# Zero Trust Workload Identity Manager module (module_enable_ztwim).
+# Namespace/label match ocp4_days_workload_ztwim's own readiness wait.
+
+- name: "Ztwim | Get ZTWIM operator deployment"
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    namespace: openshift-zero-trust-workload-identity-manager
+    label_selectors:
+      - "name=zero-trust-workload-identity-manager"
+  register: hc_ztwim_deployment
+  ignore_errors: true
+
+- name: "Ztwim | Record failure if ZTWIM deployment is missing or not ready"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['ztwim: zero-trust-workload-identity-manager deployment not ready'] }}"
+  when: >-
+    hc_ztwim_deployment is failed or
+    hc_ztwim_deployment.resources | default([]) | length == 0 or
+    (hc_ztwim_deployment.resources[0].status.readyReplicas | default(0) | int) < 1

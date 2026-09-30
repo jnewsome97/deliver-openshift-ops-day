@@ -1,0 +1,70 @@
+---
+# OpenShift Lightspeed module (module_enable_ols).
+# healthcheck.yaml's tasks/ols.yml already confirms OLSConfig/cluster and the
+# lightspeed-app-server Deployment are ready -- this file exercises the
+# actual hands-on flow from content/modules/ROOT/pages/module-13-lightspeed.adoc:
+# asking Lightspeed a real question and getting back a real, RAG-grounded
+# answer, the same as a learner does through the console chat window.
+#
+# The module's "Cluster Interaction and Troubleshooting" section uses a
+# pre-provisioned lightspeed-demo namespace / broken-pod fixture that the
+# learner inspects and eventually deletes themselves (module's own cleanup
+# step). This file deliberately does NOT touch that namespace/pod -- deleting
+# or recreating it here would destroy a live learner's in-progress
+# troubleshooting exercise on the same claim. It only reads it, which is safe
+# to do concurrently with a learner also reading it.
+#
+# Lightspeed has no external Route (ClusterIP only, no public endpoint for
+# the /v1/query API), so the query below runs via `oc exec` into the
+# lightspeed-app-server pod itself and curls its own localhost API -- this
+# needs no new resources, so no cleanup/isolation concern applies.
+
+- name: "Ols | Get lightspeed-app-server pod name"
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: openshift-lightspeed
+    label_selectors:
+      - app.kubernetes.io/name=lightspeed-service-api
+  register: hc_ols_e2e_pods
+  failed_when: hc_ols_e2e_pods.resources | default([]) | length == 0
+
+- name: "Ols | Get token for Lightspeed API query"
+  ansible.builtin.command: oc whoami -t
+  register: hc_ols_e2e_token
+  changed_when: false
+
+- name: "Ols | Ask Lightspeed a real question via its /v1/query API"
+  vars:
+    hc_ols_e2e_pod_name: "{{ hc_ols_e2e_pods.resources[0].metadata.name }}"
+  ansible.builtin.command:
+    argv:
+      - oc
+      - exec
+      - -n
+      - openshift-lightspeed
+      - "{{ hc_ols_e2e_pod_name }}"
+      - -c
+      - lightspeed-service-api
+      - --
+      - curl
+      - -sk
+      - -m
+      - "60"
+      - -w
+      - "\nHTTP_STATUS:%{http_code}"
+      - -X
+      - POST
+      - https://localhost:8443/v1/query
+      - -H
+      - "Authorization: Bearer {{ hc_ols_e2e_token.stdout }}"
+      - -H
+      - "Content-Type: application/json"
+      - -d
+      - '{"query":"What is the difference between a Deployment and a StatefulSet in OpenShift?"}'
+  register: hc_ols_e2e_query
+  changed_when: false
+  failed_when: >-
+    hc_ols_e2e_query.rc != 0 or
+    'HTTP_STATUS:200' not in hc_ols_e2e_query.stdout or
+    (hc_ols_e2e_query.stdout | regex_search('"response"\s*:\s*"(.*?)(?<!\\\\)"') | default('') | length) < 20

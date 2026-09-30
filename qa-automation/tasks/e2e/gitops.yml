@@ -1,0 +1,154 @@
+---
+# GitOps module (module_enable_gitops). Static check (ArgoCD instance
+# exists) already lives in tasks/gitops.yml -- this exercises the actual
+# learner flow from content/modules/ROOT/pages/module-06-gitops.adoc: deploy
+# a project config bundle from Git via ArgoCD, drift it, and confirm
+# self-heal reverts the drift.
+#
+# NAME COLLISION NOTE: the module's own AppProject/Application names
+# (`workshop`, `managed-project`) are avoided below (`qa-e2e-gitops-workshop`,
+# `qa-e2e-gitops-managed-project`). BUT the Git bundle at
+# support/gitops/cluster-config/ hardcodes its target namespace name
+# (`gitops-managed-project`) inside the manifests themselves -- that name is
+# NOT something our own Application object can rename, so it's the one piece
+# of this module we can't fully isolate from a live learner following the
+# same page. To stay safe, if that namespace already exists we assume a
+# learner is using it and skip this module's e2e run entirely rather than
+# risk touching their in-progress work.
+
+- name: "Gitops | Check whether the module's own gitops-managed-project namespace already exists"
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: gitops-managed-project
+  register: e2e_gitops_existing_ns
+  ignore_errors: true
+
+- name: "Gitops | Run deploy/drift/self-heal sequence"
+  when: >-
+    not (e2e_gitops_existing_ns is failed) and
+    (e2e_gitops_existing_ns.resources | default([]) | length == 0)
+  block:
+    - name: "Gitops | Create workshop AppProject"
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: argoproj.io/v1alpha1
+          kind: AppProject
+          metadata:
+            name: qa-e2e-gitops-workshop
+            namespace: openshift-gitops
+          spec:
+            description: qa-automation e2e exercise
+            sourceRepos:
+              - '*'
+            destinations:
+              - namespace: '*'
+                server: 'https://kubernetes.default.svc'
+            clusterResourceWhitelist:
+              - group: '*'
+                kind: '*'
+
+    # syncPolicy.automated is set from creation (selfHeal: true) so the e2e
+    # run doesn't depend on a human clicking Sync in the ArgoCD UI -- the
+    # lab itself does a manual sync first, then enables self-heal as a
+    # separate step; here we start with both enabled since the thing we're
+    # actually validating is that ArgoCD applies Git state and reverts drift.
+    - name: "Gitops | Create managed-project Application with automated self-heal"
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: argoproj.io/v1alpha1
+          kind: Application
+          metadata:
+            name: qa-e2e-gitops-managed-project
+            namespace: openshift-gitops
+          spec:
+            project: qa-e2e-gitops-workshop
+            destination:
+              server: 'https://kubernetes.default.svc'
+            source:
+              repoURL: 'https://github.com/rhpds/openshift-days-ops-showroom/'
+              targetRevision: main
+              path: support/gitops/cluster-config/
+            syncPolicy:
+              automated:
+                selfHeal: true
+                prune: false
+
+    - name: "Gitops | Wait for Application to report Synced and Healthy"
+      kubernetes.core.k8s_info:
+        api_version: argoproj.io/v1alpha1
+        kind: Application
+        name: qa-e2e-gitops-managed-project
+        namespace: openshift-gitops
+      register: e2e_gitops_app
+      until: >-
+        e2e_gitops_app.resources | default([]) | length > 0 and
+        e2e_gitops_app.resources[0].status.sync.status | default('') == 'Synced' and
+        e2e_gitops_app.resources[0].status.health.status | default('') == 'Healthy'
+      retries: 24
+      delay: 5
+
+    - name: "Gitops | Verify the four bundle resources landed in gitops-managed-project"
+      kubernetes.core.k8s_info:
+        api_version: "{{ item.api_version }}"
+        kind: "{{ item.kind }}"
+        namespace: gitops-managed-project
+        name: "{{ item.name }}"
+      register: e2e_gitops_bundle
+      loop:
+        - { api_version: "v1", kind: "ResourceQuota", name: "compute-quota" }
+        - { api_version: "v1", kind: "LimitRange", name: "default-limits" }
+        - { api_version: "networking.k8s.io/v1", kind: "NetworkPolicy", name: "deny-from-other-namespaces" }
+      failed_when: e2e_gitops_bundle.resources | default([]) | length == 0
+
+    - name: "Gitops | Simulate drift by patching compute-quota pod limit"
+      ansible.builtin.command: >-
+        oc patch resourcequota compute-quota -n gitops-managed-project
+        -p '{"spec":{"hard":{"pods":"999"}}}' --type=merge
+      changed_when: true
+
+    - name: "Gitops | Confirm self-heal reverts the drifted pod quota back to 20"
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: ResourceQuota
+        name: compute-quota
+        namespace: gitops-managed-project
+      register: e2e_gitops_quota
+      until: e2e_gitops_quota.resources[0].spec.hard.pods | default('') == '20'
+      retries: 12
+      delay: 5
+  always:
+    - name: "Gitops | Delete qa-e2e Application"
+      kubernetes.core.k8s:
+        state: absent
+        api_version: argoproj.io/v1alpha1
+        kind: Application
+        name: qa-e2e-gitops-managed-project
+        namespace: openshift-gitops
+      ignore_errors: true
+
+    - name: "Gitops | Delete qa-e2e AppProject"
+      kubernetes.core.k8s:
+        state: absent
+        api_version: argoproj.io/v1alpha1
+        kind: AppProject
+        name: qa-e2e-gitops-workshop
+        namespace: openshift-gitops
+      ignore_errors: true
+
+    - name: "Gitops | Delete gitops-managed-project namespace (created by our own Application)"
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: Namespace
+        name: gitops-managed-project
+      ignore_errors: true
+
+- name: "Gitops | Note if module e2e was skipped due to pre-existing namespace"
+  ansible.builtin.debug:
+    msg: "gitops: e2e run skipped, gitops-managed-project namespace already existed (possible live learner in progress)"
+  when: >-
+    not (e2e_gitops_existing_ns is failed) and
+    (e2e_gitops_existing_ns.resources | default([]) | length > 0)

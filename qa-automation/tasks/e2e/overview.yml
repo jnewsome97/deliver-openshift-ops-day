@@ -1,0 +1,170 @@
+---
+# Module 1: Overview (content/modules/ROOT/pages/index.adoc).
+# Not gated by any module_enable_* flag -- this is base lab content shown on
+# every claim regardless of module selection, so it always runs.
+#
+# IMPORTANT: index.adoc's own "Deploy and Expose in 30 Seconds" exercise uses
+# the literal project name `quick-demo` and app name `hello` -- the exact
+# names below intentionally do NOT reuse those. If this e2e run happened to
+# execute while a real learner is mid-exercise on that page, sharing the name
+# would mean this playbook's create/delete cycle races with (and can delete)
+# the learner's own in-progress project. Use a dedicated qa-e2e-* name here so
+# an e2e run can never collide with a live learner session.
+
+- name: "M1 | oc whoami"
+  ansible.builtin.command: oc whoami
+  register: oc_whoami
+  changed_when: false
+  failed_when: oc_whoami.rc != 0
+
+- name: "M1 | oc get nodes"
+  ansible.builtin.command: oc get nodes
+  register: nodes_r
+  changed_when: false
+  failed_when: nodes_r.rc != 0
+
+- name: "M1 | oc get clusterversion"
+  ansible.builtin.command: oc get clusterversion
+  register: output_r
+  changed_when: false
+  failed_when: output_r.rc != 0
+
+- name: "M1 | oc get pods -n openshift-monitoring | grep prometheus"
+  ansible.builtin.shell: oc get pods -n openshift-monitoring | grep prometheus
+  register: output_r
+  changed_when: false
+  failed_when: output_r.rc != 0
+
+# Remaining "already running, nobody set this up" checks from index.adoc --
+# all read-only oc get's, so safe to run without any isolation concern.
+
+- name: "M1 | oc get pods -n openshift-image-registry"
+  ansible.builtin.command: oc get pods -n openshift-image-registry
+  register: output_r
+  changed_when: false
+  failed_when: output_r.rc != 0 or 'image-registry' not in output_r.stdout
+
+- name: "M1 | oc get imagestreams -n openshift"
+  ansible.builtin.command: oc get imagestreams -n openshift
+  register: output_r
+  changed_when: false
+  failed_when: output_r.rc != 0 or output_r.stdout_lines | length < 2
+
+- name: "M1 | oc get routes -A"
+  ansible.builtin.command: oc get routes -A
+  register: output_r
+  changed_when: false
+  failed_when: output_r.rc != 0 or output_r.stdout_lines | length < 2
+
+- name: "M1 | oc get machinesets.machine.openshift.io -n openshift-machine-api"
+  ansible.builtin.command: oc get machinesets.machine.openshift.io -n openshift-machine-api
+  register: output_r
+  changed_when: false
+  failed_when: output_r.rc != 0
+
+- name: "M1 | oc get packagemanifests -n openshift-marketplace"
+  ansible.builtin.command: oc get packagemanifests -n openshift-marketplace
+  register: output_r
+  changed_when: false
+  failed_when: output_r.rc != 0 or output_r.stdout_lines | length < 2
+
+- name: "M1 | get token for prometheus/thanos"
+  ansible.builtin.command: oc whoami -t
+  register: token_r
+
+- name: "M1 | get route for prometheus/thanos"
+  kubernetes.core.k8s_info:
+    api_version: route.openshift.io/v1
+    kind: Route
+    name: thanos-querier
+    namespace: openshift-monitoring
+  register: route_r
+
+- name: "M1 | set info for prometheus/thanos"
+  ansible.builtin.set_fact:
+    thanos_host: "{{ route_r.resources[0].status.ingress[0].host }}"
+    thanos_token: "{{ token_r.stdout }}"
+
+- name: "M1 | query prometheus"
+  vars:
+    promql_query: "sum(rate(container_cpu_usage_seconds_total[5m])) by (namespace)"
+  ansible.builtin.uri:
+    url: https://{{ thanos_host }}/api/v1/query?query={{ promql_query | urlencode }}
+    method: GET
+    headers:
+      Authorization: "Bearer {{ thanos_token }}"
+    return_content: true
+  register: prom_r
+  failed_when: prom_r.status != 200
+
+- name: "M1 | Delete qa-e2e-quick-demo project"
+  kubernetes.core.k8s:
+    state: absent
+    api_version: project.openshift.io/v1
+    kind: Project
+    name: qa-e2e-quick-demo
+
+- name: "M1 | Wait for qa-e2e-quick-demo project to be deleted"
+  ansible.builtin.command: oc get project qa-e2e-quick-demo
+  register: command_r
+  until: command_r.rc == 1
+  failed_when: false
+  retries: 10
+  delay: 5
+
+# Wrapped in block/always so a failure anywhere in the deploy/validate steps
+# (e.g. GET httpd asserting the wrong status) still runs cleanup below,
+# instead of aborting the play and leaving qa-e2e-quick-demo stranded on the
+# cluster indefinitely.
+- name: "M1 | Deploy, validate, and clean up qa-e2e-quick-demo"
+  block:
+    - name: "M1 | Deploy qa-e2e-quick-demo project with httpd"
+      ansible.builtin.shell: |
+        oc new-project qa-e2e-quick-demo
+        oc new-app --name=hello --image=registry.access.redhat.com/ubi9/httpd-24
+        oc create route edge hello --service=hello
+
+    - name: "M1 | Wait for httpd readiness"
+      ansible.builtin.command: oc wait --for=condition=Available=True -n qa-e2e-quick-demo deployment hello --timeout 30s
+      register: command_r
+      until: command_r.rc == 0
+      retries: 3
+
+    # route returns a 503 for another few seconds so add a wait
+    - name: "M1 | Wait an extra 3s for httpd readiness"
+      ansible.builtin.command: sleep 3
+
+    - name: "M1 | get route for httpd"
+      kubernetes.core.k8s_info:
+        api_version: route.openshift.io/v1
+        kind: Route
+        name: hello
+        namespace: qa-e2e-quick-demo
+      register: httpd_route_r
+
+    - name: "M1 | set info for httpd"
+      ansible.builtin.set_fact:
+        httpd_host: "{{ httpd_route_r.resources[0].status.ingress[0].host }}"
+
+    - name: "M1 | GET httpd"
+      ansible.builtin.uri:
+        url: https://{{ httpd_host }}/
+        return_content: true
+      register: httpd_r
+      # httpd is expected to return a 403 out of the box
+      failed_when: httpd_r.status != 403
+  always:
+    - name: "M1 | Delete qa-e2e-quick-demo project"
+      kubernetes.core.k8s:
+        state: absent
+        api_version: project.openshift.io/v1
+        kind: Project
+        name: qa-e2e-quick-demo
+
+    - name: "M1 | Wait for qa-e2e-quick-demo project to be deleted"
+      ansible.builtin.command: oc get project qa-e2e-quick-demo
+      register: command_r
+      until: command_r.rc == 1
+      failed_when: false
+      retries: 10
+      delay: 5

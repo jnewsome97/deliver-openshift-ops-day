@@ -1,0 +1,20 @@
+---
+# GitOps module (module_enable_gitops).
+# Mirrors the existence check ocp4_workload_openshift_gitops_temp itself
+# waits on during provisioning: the openshift-gitops ArgoCD instance.
+
+- name: "Gitops | Get openshift-gitops ArgoCD instance"
+  kubernetes.core.k8s_info:
+    api_version: argoproj.io/v1beta1
+    kind: ArgoCD
+    name: openshift-gitops
+    namespace: openshift-gitops
+  register: hc_gitops_argocd
+  ignore_errors: true
+
+- name: "Gitops | Record failure if ArgoCD instance is missing"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['gitops: ArgoCD instance openshift-gitops/openshift-gitops not found'] }}"
+  when: >-
+    hc_gitops_argocd is failed or
+    hc_gitops_argocd.resources | default([]) | length == 0

@@ -1,0 +1,41 @@
+---
+# OpenShift Lightspeed module (module_enable_ols).
+# Deployed as a fixed singleton OLSConfig/cluster in the
+# openshift-lightspeed namespace.
+
+- name: "Ols | Get OLSConfig instance"
+  kubernetes.core.k8s_info:
+    api_version: ols.openshift.io/v1alpha1
+    kind: OLSConfig
+    name: cluster
+  register: hc_ols_config
+  ignore_errors: true
+
+- name: "Ols | Record failure if OLSConfig is missing"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['ols: OLSConfig/cluster not found'] }}"
+  when: >-
+    hc_ols_config is failed or
+    hc_ols_config.resources | default([]) | length == 0
+
+# Match the exact condition ocp4_workload_ols_cleanup itself waits on during
+# provisioning (readyReplicas > 0 on this specific Deployment), rather than
+# "any Running pod in the namespace" -- the operator or console-plugin pods
+# can be Running while the actual lightspeed-app-server backend is still
+# crashlooping, which students would first notice as a broken chat panel.
+- name: "Ols | Get lightspeed-app-server deployment"
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: lightspeed-app-server
+    namespace: openshift-lightspeed
+  register: hc_ols_server
+  ignore_errors: true
+
+- name: "Ols | Record failure if lightspeed-app-server is not ready"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['ols: Deployment lightspeed-app-server not ready in openshift-lightspeed namespace'] }}"
+  when: >-
+    hc_ols_server is failed or
+    hc_ols_server.resources | default([]) | length == 0 or
+    (hc_ols_server.resources[0].status.readyReplicas | default(0) | int) < 1

@@ -3,6 +3,19 @@
 # Runs post-provisioning to verify the lab environment is functional.
 # Should complete in under 60 seconds.
 #
+# This lab has a module selector (module_enable_* catalog parameters,
+# see rh1-2027/lb1543-ocp-ops-day-cnv/common.yaml) so not every claim
+# deploys the same workloads. Module-specific checks live in tasks/ and
+# are only included when their module was actually enabled for this claim
+# (read from the MODULE_ENABLE_* env vars common.yaml sets on the
+# Showroom pod). Base checks below always run regardless of module
+# selection.
+#
+# Every check is collected instead of failing fast, so one run reports
+# everything that's broken instead of stopping at the first problem --
+# useful when several independent modules could each be broken on their
+# own.
+#
 # Exit 0 = healthy, non-zero = unhealthy.
 
 - name: Environment Health Check
@@ -22,44 +35,149 @@
       kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
   vars:
     monorepo_path: /showroom/repo
+    hc_failures: []
+    # The env lookup returns '' (not undefined) when a var isn't set, so
+    # default() needs boolean=true to treat '' as missing too -- otherwise
+    # it never overrides the empty string and every module gate defaults
+    # to disabled instead of enabled.
+    module_enable_virt: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_VIRT') | default('true', true) | bool }}"
+    module_enable_gitops: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_GITOPS') | default('true', true) | bool }}"
+    module_enable_devhub: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_DEVHUB') | default('true', true) | bool }}"
+    module_enable_security: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_SECURITY') | default('true', true) | bool }}"
+    module_enable_ols: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_OLS') | default('true', true) | bool }}"
+    module_enable_acm: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_ACM') | default('true', true) | bool }}"
+    module_enable_ztwim: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_ZTWIM') | default('true', true) | bool }}"
+    module_enable_vault: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_VAULT') | default('true', true) | bool }}"
   tasks:
-    - name: Monorepo is cloned at expected path
+
+    # -- Base checks (always run) --------------------------------------
+
+    - name: "Base | Monorepo is cloned at expected path"
       ansible.builtin.stat:
         path: "{{ monorepo_path }}"
       register: repo_stat
-      failed_when: not repo_stat.stat.exists or not repo_stat.stat.isdir
+      ignore_errors: true
 
-    - name: Expected top-level directories are present
+    - name: "Base | Record failure if monorepo is missing"
+      ansible.builtin.set_fact:
+        hc_failures: "{{ hc_failures + ['base: monorepo not found at ' + monorepo_path] }}"
+      when: >-
+        repo_stat is failed or
+        not repo_stat.stat.exists or not repo_stat.stat.isdir
+
+    - name: "Base | Expected top-level directories are present"
       ansible.builtin.stat:
         path: "{{ monorepo_path }}/{{ item }}"
       register: dir_stat
-      failed_when: not dir_stat.stat.exists or not dir_stat.stat.isdir
+      ignore_errors: true
       loop:
         - content
         # - automation/gitops/bootstrap-infra
         - automation/ansible
 
-    - name: Cluster is reachable and user is logged in
+    - name: "Base | Record failure for any missing top-level directory"
+      ansible.builtin.set_fact:
+        hc_failures: "{{ hc_failures + ['base: expected directory missing: ' + item.item] }}"
+      loop: "{{ dir_stat.results }}"
+      when: item is failed or not item.stat.exists or not item.stat.isdir
+
+    - name: "Base | oc whoami"
       ansible.builtin.command: oc whoami
       register: oc_whoami
       changed_when: false
-      failed_when: oc_whoami.rc != 0
+      ignore_errors: true
 
-    - name: Showroom pod is running
+    - name: "Base | Record failure if not logged in to the cluster"
+      ansible.builtin.set_fact:
+        hc_failures: "{{ hc_failures + ['base: oc whoami failed, not logged in to the cluster'] }}"
+      when: oc_whoami is failed or oc_whoami.rc != 0
+
+    - name: "Base | Showroom pod is running"
       kubernetes.core.k8s_info:
         api_version: v1
         kind: Pod
         label_selectors:
           - app.kubernetes.io/name=showroom
       register: showroom_pods
-      failed_when: >-
-        showroom_pods.resources | length == 0 or
+      ignore_errors: true
+
+    - name: "Base | Record failure if Showroom pod is not running"
+      ansible.builtin.set_fact:
+        hc_failures: "{{ hc_failures + ['base: no Running Showroom pod found'] }}"
+      when: >-
+        showroom_pods is failed or
+        showroom_pods.resources | default([]) | length == 0 or
         showroom_pods.resources | selectattr('status.phase', 'equalto', 'Running') | list | length == 0
 
-    - name: Subscriptions are installed
+    - name: "Base | Subscriptions are installed"
       kubernetes.core.k8s_info:
         api_version: operators.coreos.com/v1alpha1
         kind: Subscription
       register: operator_subscriptions
-      failed_when: >-
-        operator_subscriptions.resources | length == 0
+      ignore_errors: true
+
+    - name: "Base | Record failure if no operator Subscriptions are installed"
+      ansible.builtin.set_fact:
+        hc_failures: "{{ hc_failures + ['base: no operator Subscriptions found'] }}"
+      when: >-
+        operator_subscriptions is failed or
+        operator_subscriptions.resources | default([]) | length == 0
+
+    # -- Module checks (only for modules enabled on this claim) --------
+
+    # common.yaml's _hcp_workloads bundle (triggered by module_enable_acm
+    # alone) also deploys OpenShift Virtualization and GitOps as HCP/KubeVirt
+    # infrastructure, independent of module_enable_virt/_gitops. So a claim
+    # with only module_enable_acm=true still gets both deployed and needs
+    # both checked, even with their own module flags off.
+    - name: "Virt | Run virtualization module checks"
+      ansible.builtin.include_tasks: tasks/virt.yml
+      when: module_enable_virt or module_enable_acm
+
+    - name: "Gitops | Run GitOps module checks"
+      ansible.builtin.include_tasks: tasks/gitops.yml
+      when: module_enable_gitops or module_enable_acm
+
+    - name: "Devhub | Run Developer Hub module checks"
+      ansible.builtin.include_tasks: tasks/devhub.yml
+      when: module_enable_devhub
+
+    # security, ztwim, and vault are provisioned together as ONE bundle
+    # (common.yaml's _security_workloads: RHACS + console-embed +
+    # compliance-operator + ztwim + vault) whenever ANY of
+    # module_enable_security / _ztwim / _vault is true -- there's no way to
+    # enable just one of the three at provisioning time. Gate all three
+    # checks on the same combined condition so e.g. a claim with only
+    # module_enable_vault=true still gets RHACS/compliance-operator/ZTWIM
+    # checked, since they were deployed regardless.
+    - name: "Security | Run security module checks"
+      ansible.builtin.include_tasks: tasks/security.yml
+      when: module_enable_security or module_enable_ztwim or module_enable_vault
+
+    - name: "Ols | Run OpenShift Lightspeed module checks"
+      ansible.builtin.include_tasks: tasks/ols.yml
+      when: module_enable_ols
+
+    - name: "Acm | Run ACM module checks"
+      ansible.builtin.include_tasks: tasks/acm.yml
+      when: module_enable_acm
+
+    - name: "Ztwim | Run Zero Trust Workload Identity Manager module checks"
+      ansible.builtin.include_tasks: tasks/ztwim.yml
+      when: module_enable_security or module_enable_ztwim or module_enable_vault
+
+    - name: "Vault | Run Vault module checks"
+      ansible.builtin.include_tasks: tasks/vault.yml
+      when: module_enable_security or module_enable_ztwim or module_enable_vault
+
+    # -- Report ----------------------------------------------------------
+
+    - name: Report healthy
+      ansible.builtin.debug:
+        msg: "Healthcheck passed, no failures found"
+      when: hc_failures | length == 0
+
+    - name: Fail if any checks failed
+      ansible.builtin.fail:
+        msg: "{{ hc_failures }}"
+      when: hc_failures | length > 0

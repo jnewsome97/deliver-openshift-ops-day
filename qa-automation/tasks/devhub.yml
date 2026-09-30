@@ -1,0 +1,65 @@
+---
+# Developer Hub module (module_enable_devhub).
+# ocp4_days_workload_rhdh names the operator-managed Deployment
+# "backstage-<instance_name>" (default instance name: developer-hub).
+
+- name: "Devhub | Get RHDH Backstage deployment"
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: backstage-developer-hub
+    namespace: backstage
+  register: hc_devhub_deployment
+  ignore_errors: true
+
+- name: "Devhub | Record failure if Backstage deployment is missing or not ready"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['devhub: Deployment backstage-developer-hub not ready in backstage namespace'] }}"
+  when: >-
+    hc_devhub_deployment is failed or
+    hc_devhub_deployment.resources | default([]) | length == 0 or
+    (hc_devhub_deployment.resources[0].status.readyReplicas | default(0) | int) < 1
+
+# A healthy Backstage deployment doesn't mean the workshop content behind it
+# loaded. ocp4_days_workload_rhdh's setup_workshop block seeds a
+# pre-built-catalog ConfigMap (teams/components/scaffolder template) and
+# four team namespaces the module's exercises point students at -- confirm
+# the actual catalog data is present, not just the ConfigMap object.
+- name: "Devhub | Get pre-built-catalog ConfigMap"
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: ConfigMap
+    name: pre-built-catalog
+    namespace: backstage
+  register: hc_devhub_catalog_cm
+  ignore_errors: true
+
+- name: "Devhub | Record failure if pre-built-catalog ConfigMap is missing catalog data"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['devhub: pre-built-catalog ConfigMap missing or empty catalog-info.yaml in backstage namespace'] }}"
+  when: >-
+    hc_devhub_catalog_cm is failed or
+    hc_devhub_catalog_cm.resources | default([]) | length == 0 or
+    hc_devhub_catalog_cm.resources[0].data['catalog-info.yaml'] | default('') | length == 0
+
+- name: "Devhub | Get RHDH workshop team namespaces"
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: "{{ item }}"
+  register: hc_devhub_team_ns
+  ignore_errors: true
+  loop:
+    - payments-team
+    - inventory-team
+    - platform-services
+    - ops-track-demo
+
+- name: "Devhub | Record failure for any missing/non-Active RHDH workshop team namespace"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['devhub: workshop namespace ' + item.item + ' missing or not Active (used by RHDH topology/catalog exercises)'] }}"
+  loop: "{{ hc_devhub_team_ns.results }}"
+  when: >-
+    item is failed or
+    item.resources | default([]) | length == 0 or
+    item.resources[0].status.phase | default('') != 'Active'

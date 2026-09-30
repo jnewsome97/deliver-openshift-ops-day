@@ -1,0 +1,27 @@
+---
+# Virtualization module (module_enable_virt).
+# Confirms HyperConverged reached the same "ReconcileCompleted"/Available
+# condition that ocp4_workload_openshift_virtualization_temp waits on during
+# provisioning (see automation/ansible/roles/.../tasks/workload.yml).
+
+- name: "Virt | Get HyperConverged instance"
+  kubernetes.core.k8s_info:
+    api_version: hco.kubevirt.io/v1beta1
+    kind: HyperConverged
+    name: kubevirt-hyperconverged
+    namespace: openshift-cnv
+  register: hc_virt_hco
+  ignore_errors: true
+
+- name: "Virt | Record failure if HyperConverged is missing or not Available"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['virt: HyperConverged kubevirt-hyperconverged not Available in openshift-cnv'] }}"
+  when: >-
+    hc_virt_hco is failed or
+    hc_virt_hco.resources | default([]) | length == 0 or
+    (
+      hc_virt_hco.resources[0].status.conditions | default([])
+      | selectattr('type', 'equalto', 'Available')
+      | selectattr('status', 'equalto', 'True')
+      | list | length == 0
+    )

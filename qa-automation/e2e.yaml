@@ -2,6 +2,19 @@
 # E2E — End-to-end test
 # Runs all module solve + validate sequences to verify the full lab
 # works from start to finish without manual intervention.
+#
+# Unlike healthcheck.yaml, this is NOT read-only -- module task files under
+# tasks/e2e/ create and clean up real resources to simulate what a learner
+# would actually do.
+#
+# This lab has a module selector (module_enable_* catalog parameters, see
+# rh1-2027/lb1543-ocp-ops-day-cnv/common.yaml), so not every claim deploys
+# the same workloads. Module-specific e2e sequences live in tasks/e2e/ and
+# are only included when their module was actually enabled for this claim
+# (read from the MODULE_ENABLE_* env vars common.yaml sets on the Showroom
+# pod), mirroring the same module-awareness healthcheck.yaml uses. Module 1
+# (Overview) below is base content, not gated by any module_enable_* flag,
+# so it always runs.
 
 - name: End-to-End Test
   hosts: localhost
@@ -32,125 +45,76 @@
     KUBECONFIG: "{{ k8s_kubeconfig | default(omit) }}"
     K8S_AUTH_KUBECONFIG: "{{ k8s_kubeconfig | default(omit) }}"
   vars:
+    hc_failures: []
+    # The env lookup returns '' (not undefined) when a var isn't set, so
+    # default() needs boolean=true to treat '' as missing too -- otherwise
+    # it never overrides the empty string and every module gate defaults
+    # to disabled instead of enabled. Kept in sync with healthcheck.yaml.
+    module_enable_virt: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_VIRT') | default('true', true) | bool }}"
+    module_enable_gitops: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_GITOPS') | default('true', true) | bool }}"
+    module_enable_devhub: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_DEVHUB') | default('true', true) | bool }}"
+    module_enable_security: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_SECURITY') | default('true', true) | bool }}"
+    module_enable_ols: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_OLS') | default('true', true) | bool }}"
+    module_enable_acm: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_ACM') | default('true', true) | bool }}"
+    module_enable_ztwim: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_ZTWIM') | default('true', true) | bool }}"
+    module_enable_vault: "{{ lookup('ansible.builtin.env', 'MODULE_ENABLE_VAULT') | default('true', true) | bool }}"
   tasks:
 
-    # -- Module 1: Overview --------------------------------------------------
+    # -- Module 1: Overview (base content, always runs) ----------------
 
-    - name: "M1 | oc whoami"
-      ansible.builtin.command: oc whoami
-      register: oc_whoami
-      changed_when: false
-      failed_when: oc_whoami.rc != 0
+    - name: "Overview | Run Module 1 end-to-end sequence"
+      ansible.builtin.include_tasks: tasks/e2e/overview.yml
 
-    - name: "M1 | oc get nodes"
-      ansible.builtin.command: oc get nodes
-      register: nodes_r
-      changed_when: false
-      failed_when: nodes_r.rc != 0
+    # -- Module e2e sequences (only for modules enabled on this claim) -
+    #
+    # Gates mirror the *provisioning* bundling documented in README.md
+    # (common.yaml doesn't map module_enable_* 1:1 to workloads), so a
+    # module's e2e content doesn't silently get skipped for a claim where
+    # the underlying workload was actually deployed under a different flag.
 
-    - name: "M1 | oc get clusterversion"
-      ansible.builtin.command: oc get clusterversion
-      register: output_r
-      changed_when: false
-      failed_when: output_r.rc != 0
+    - name: "Virt | Run virtualization module e2e sequence"
+      ansible.builtin.include_tasks: tasks/e2e/virt.yml
+      when: module_enable_virt or module_enable_acm
 
-    - name: "M1 | oc get pods -n openshift-monitoring | grep prometheus"
-      ansible.builtin.shell: oc get pods -n openshift-monitoring | grep prometheus
-      register: output_r
-      changed_when: false
-      failed_when: output_r.rc != 0
+    - name: "Gitops | Run GitOps module e2e sequence"
+      ansible.builtin.include_tasks: tasks/e2e/gitops.yml
+      when: module_enable_gitops or module_enable_acm
 
-    - name: "M1 | get token for prometheus/thanos"
-      ansible.builtin.command: oc whoami -t
-      register: token_r
+    - name: "Devhub | Run Developer Hub module e2e sequence"
+      ansible.builtin.include_tasks: tasks/e2e/devhub.yml
+      when: module_enable_devhub
 
-    - name: "M1 | get route for prometheus/thanos"
-      kubernetes.core.k8s_info:
-        api_version: route.openshift.io/v1
-        kind: Route
-        name: thanos-querier
-        namespace: openshift-monitoring
-      register: route_r
+    - name: "Security | Run security module e2e sequence"
+      ansible.builtin.include_tasks: tasks/e2e/security.yml
+      when: module_enable_security or module_enable_ztwim or module_enable_vault
 
-    - name: "M1 | set info for prometheus/thanos"
-      ansible.builtin.set_fact:
-        thanos_host: "{{ route_r.resources[0].status.ingress[0].host }}"
-        thanos_token: "{{ token_r.stdout }}"
+    - name: "Ols | Run OpenShift Lightspeed module e2e sequence"
+      ansible.builtin.include_tasks: tasks/e2e/ols.yml
+      when: module_enable_ols
 
-    - name: "M1 | query prometheus"
-      vars:
-        promql_query: "sum(rate(container_cpu_usage_seconds_total[5m])) by (namespace)"
-      ansible.builtin.uri:
-        url: https://{{ thanos_host }}/api/v1/query?query={{ promql_query | urlencode }}
-        method: GET
-        headers:
-          Authorization: "Bearer {{ thanos_token }}"
-        return_content: true
-      register: prom_r
-      failed_when: prom_r.status != 200
+    - name: "Acm | Run ACM module e2e sequence"
+      ansible.builtin.include_tasks: tasks/e2e/acm.yml
+      when: module_enable_acm
 
-    - name: "M1 | Delete quick-demo project"
-      kubernetes.core.k8s:
-        state: absent
-        api_version: project.openshift.io/v1
-        kind: Project
-        name: quick-demo
+    - name: "Ztwim | Run Zero Trust Workload Identity Manager module e2e sequence"
+      ansible.builtin.include_tasks: tasks/e2e/ztwim.yml
+      when: module_enable_security or module_enable_ztwim or module_enable_vault
 
-    - name: "M1 | Wait for quick-demo project to be deleted"
-      ansible.builtin.command: oc get project quick-demo
-      register: command_r
-      until: command_r.rc == 1
-      failed_when: false
-      retries: 10
-      delay: 5
+    - name: "Vault | Run Vault module e2e sequence"
+      ansible.builtin.include_tasks: tasks/e2e/vault.yml
+      when: module_enable_security or module_enable_ztwim or module_enable_vault
 
-    - name: "M1 | Deploy quick-demo project with httpd"
-      ansible.builtin.shell: |
-        oc new-project quick-demo
-        oc new-app --name=hello --image=registry.access.redhat.com/ubi9/httpd-24
-        oc create route edge hello --service=hello
+    # -- Report ------------------------------------------------------------
+    # acm.yml and ztwim.yml accumulate into hc_failures (same pattern as
+    # healthcheck.yaml) rather than failing fast, so a single e2e run can
+    # report every problem found instead of stopping at the first one.
 
-    - name: "M1 | Wait for httpd readiness"
-      ansible.builtin.command: oc wait --for=condition=Available=True -n quick-demo deployment hello --timeout 30s
-      register: command_r
-      until: command_r.rc == 0
-      retries: 3
+    - name: Report healthy
+      ansible.builtin.debug:
+        msg: "E2E passed, no failures found"
+      when: hc_failures | length == 0
 
-    # route returns a 503 for another few seconds so add a wait
-    - name: "M1 | Wait an extra 3s for httpd readiness"
-      ansible.builtin.command: sleep 3
-    
-    - name: "M1 | get route for httpd"
-      kubernetes.core.k8s_info:
-        api_version: route.openshift.io/v1
-        kind: Route
-        name: hello
-        namespace: quick-demo
-      register: httpd_route_r
-
-    - name: "M1 | set info for httpd"
-      ansible.builtin.set_fact:
-        httpd_host: "{{ httpd_route_r.resources[0].status.ingress[0].host }}"
-
-    - name: "M1 | GET httpd"
-      ansible.builtin.uri:
-        url: https://{{ httpd_host }}/
-        return_content: true
-      register: httpd_r
-      # httpd is expected to return a 403 out of the box
-      failed_when: httpd_r.status != 403
-
-    - name: "M1 | Delete quick-demo project"
-      kubernetes.core.k8s:
-        state: absent
-        api_version: project.openshift.io/v1
-        kind: Project
-        name: quick-demo
-
-    - name: "M1 | Wait for quick-demo project to be deleted"
-      ansible.builtin.command: oc get project quick-demo
-      register: command_r
-      until: command_r.rc == 1
-      failed_when: false
-      retries: 10
-      delay: 5
+    - name: Fail if any e2e checks failed
+      ansible.builtin.fail:
+        msg: "{{ hc_failures }}"
+      when: hc_failures | length > 0

@@ -1,0 +1,173 @@
+---
+# Developer Hub module (module_enable_devhub, content/modules/ROOT/pages/module-12-developer-hub.adoc).
+#
+# qa-automation/tasks/devhub.yml (the healthcheck) already validates static
+# provisioning state (Backstage deployment ready, pre-built-catalog ConfigMap
+# has data, the four team namespaces exist) -- this file doesn't repeat that,
+# it exercises the dynamic behavior a learner actually drives.
+#
+# SCOPE NOTE: the module's real hands-on steps are deliberately NOT
+# reproduced here in full:
+#   - Step 9's "Deploy a New Service" golden-path template and both
+#     troubleshooting tickets operate on shared, already-provisioned
+#     resources a live learner works with directly by the exact same names
+#     (namespace `order-tracker`; deployments `payments-gateway` in
+#     `payments-team` and `inventory-db-migrator` in `inventory-team`). A
+#     concurrent e2e run creating/breaking/fixing those same resources would
+#     directly collide with a learner's own ticket-diagnosis exercise --
+#     there's no qa-e2e- renaming that avoids this, since the whole point of
+#     the exercise is those specific shared names. Left untested here.
+#   - The RHDH monitoring toggle
+#     (`oc patch backstage developer-hub -n backstage ... monitoring.enabled`)
+#     mutates the one shared Backstage CR every learner on this claim shares.
+#     Flipping it on/off from an automated run risks stomping a learner's own
+#     toggle mid-exercise. Left untested here.
+#   - Verifying the golden-path template's *catalog-visible* result (the
+#     Kubernetes tab actually showing pods) requires an authenticated
+#     Backstage/Guest API session, which is out of scope for a headless oc-only
+#     check. What's verified below instead is the underlying mechanism the
+#     template and the label-contract troubleshooting both depend on: that a
+#     Deployment carrying the `backstage.io/kubernetes-id` label pattern the
+#     module explains in Step 8 is what makes discovery work at all.
+#
+# What IS exercised: the read-only configuration-tracing commands from
+# Steps 6-8 (safe to run verbatim, they're pure oc get's against fixed
+# cluster-scoped config, no collision risk), plus a self-contained
+# label-contract check using dedicated qa-e2e- resources that never touch any
+# name a learner types themselves.
+
+- name: "Devhub | oc get backstage CR config references"
+  ansible.builtin.shell: >-
+    oc get backstage developer-hub -n backstage -o yaml |
+    grep -E "dynamicPlugins|extraEnvs|extraFiles|appConfig"
+  register: output_r
+  changed_when: false
+  failed_when: >-
+    output_r.rc != 0 or
+    'appConfig' not in output_r.stdout or
+    'extraFiles' not in output_r.stdout
+
+- name: "Devhub | oc get dynamic-plugins ConfigMap"
+  ansible.builtin.shell: >-
+    oc get configmap dynamic-plugins-rhdh -n backstage
+    -o jsonpath='{.data.dynamic-plugins\.yaml}'
+  register: output_r
+  changed_when: false
+  failed_when: output_r.rc != 0 or 'kubernetes' not in output_r.stdout
+
+- name: "Devhub | oc get app-config-rhdh ConfigMap"
+  ansible.builtin.shell: >-
+    oc get configmap app-config-rhdh -n backstage
+    -o jsonpath='{.data.app-config-rhdh\.yaml}'
+  register: output_r
+  changed_when: false
+  failed_when: output_r.rc != 0 or 'serviceAccount' not in output_r.stdout
+
+- name: "Devhub | oc get clusterrolebindings for rhdh service account"
+  ansible.builtin.shell: >-
+    oc get clusterrolebindings -o custom-columns='BINDING:.metadata.name,ROLE:.roleRef.name' |
+    grep rhdh-
+  register: output_r
+  changed_when: false
+  failed_when: >-
+    output_r.rc != 0 or
+    'rhdh-cluster-reader' not in output_r.stdout or
+    'rhdh-scaffolder-binding' not in output_r.stdout
+
+# Self-contained label-contract check: create our own deployment with a
+# *mismatched* backstage.io/kubernetes-id label (mirroring Ticket 1's root
+# cause), confirm the mismatch is visible via oc (the same command Step 8/
+# Ticket 1 uses to diagnose it), then fix it and confirm the fix is visible
+# too -- validating the exact mechanism the real ticket exercise relies on,
+# without ever touching payments-team/inventory-team/order-tracker.
+- name: "Devhub | Create, verify, and clean up qa-e2e-devhub-demo label-contract check"
+  block:
+    - name: "Devhub | Create qa-e2e-devhub-demo namespace"
+      kubernetes.core.k8s:
+        state: present
+        api_version: v1
+        kind: Namespace
+        name: qa-e2e-devhub-demo
+
+    - name: "Devhub | Deploy demo app with mismatched backstage.io/kubernetes-id label"
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: qa-e2e-devhub-demo
+            namespace: qa-e2e-devhub-demo
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: qa-e2e-devhub-demo
+            template:
+              metadata:
+                labels:
+                  app: qa-e2e-devhub-demo
+                  backstage.io/kubernetes-id: qa-e2e-devhub-demo-WRONG
+              spec:
+                containers:
+                  - name: pause
+                    image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+                    command: ["sleep", "3600"]
+
+    - name: "Devhub | Confirm mismatched label is visible (same command as Ticket 1 diagnosis)"
+      # argv (not a plain string) -- ansible.builtin.command shlex-splits plain
+      # strings before exec, which consumes the backslash before oc ever sees
+      # it, so the escaped dot in the label key silently turns into a (wrong)
+      # nested-path separator and the column comes back empty. argv passes
+      # each item through untouched.
+      ansible.builtin.command:
+        argv:
+          - oc
+          - get
+          - deployment
+          - qa-e2e-devhub-demo
+          - -n
+          - qa-e2e-devhub-demo
+          - -o
+          - custom-columns=BACKSTAGE-ID:.spec.template.metadata.labels.backstage\.io/kubernetes-id
+          - --no-headers
+      register: label_before_r
+      changed_when: false
+      failed_when: label_before_r.stdout | trim != 'qa-e2e-devhub-demo-WRONG'
+
+    - name: "Devhub | Fix the label (same patch pattern as Ticket 1 fix)"
+      ansible.builtin.command: >-
+        oc patch deployment qa-e2e-devhub-demo -n qa-e2e-devhub-demo --type=json
+        -p '[{"op":"replace","path":"/spec/template/metadata/labels/backstage.io~1kubernetes-id","value":"qa-e2e-devhub-demo"}]'
+      changed_when: true
+
+    - name: "Devhub | Confirm the fixed label is now correct"
+      ansible.builtin.command:
+        argv:
+          - oc
+          - get
+          - deployment
+          - qa-e2e-devhub-demo
+          - -n
+          - qa-e2e-devhub-demo
+          - -o
+          - custom-columns=BACKSTAGE-ID:.spec.template.metadata.labels.backstage\.io/kubernetes-id
+          - --no-headers
+      register: label_after_r
+      changed_when: false
+      failed_when: label_after_r.stdout | trim != 'qa-e2e-devhub-demo'
+  always:
+    - name: "Devhub | Delete qa-e2e-devhub-demo namespace"
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: Namespace
+        name: qa-e2e-devhub-demo
+
+    - name: "Devhub | Wait for qa-e2e-devhub-demo namespace to be deleted"
+      ansible.builtin.command: oc get namespace qa-e2e-devhub-demo
+      register: command_r
+      until: command_r.rc == 1
+      failed_when: false
+      retries: 10
+      delay: 5

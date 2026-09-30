@@ -1,0 +1,43 @@
+---
+# Zero Trust Workload Identity Manager module (module_enable_ztwim),
+# content/modules/ROOT/pages/module-17-ztwim.adoc ("Zero-Trust Database
+# Access with SPIFFE mTLS").
+#
+# SCOPE TRADEOFF: the real hands-on lab clones an external repo
+# (github.com/rhpds/openshift-days-ops-showroom) and runs its
+# configure-ztwim-lab.sh / configure-ztwim-postgresql-lab.sh scripts, which
+# deploy PostgreSQL + a client workload into fixed, hardcoded namespaces
+# (postgresql-spiffe, postgresql-spiffe-client) to demonstrate SPIFFE-issued
+# mTLS certs and connection rejection without them. Reproducing that full
+# flow here would either (a) require this playbook to depend on cloning an
+# external GitHub repo, or (b) reuse those exact hardcoded namespace names,
+# which would race with / collide with a live learner running the same
+# scripts on the same claim -- the same collision risk documented for
+# tasks/e2e/overview.yml's quick-demo project, but here the names aren't
+# parameterizable since they come from someone else's setup scripts.
+#
+# So instead of reproducing the full external lab, this validates the actual
+# mechanism that makes the lab possible and that healthcheck.yaml's simple
+# "is the operator Deployment ready" check doesn't cover: whether ZTWIM's
+# SPIFFE identity injection admission webhook is actually registered on the
+# cluster. Without it, configure-ztwim-lab.sh would have nothing to attach
+# workload identities to, even with the operator Deployment itself Running.
+
+- name: "Ztwim | Get MutatingWebhookConfigurations"
+  kubernetes.core.k8s_info:
+    api_version: admissionregistration.k8s.io/v1
+    kind: MutatingWebhookConfiguration
+  register: hc_ztwim_webhooks
+  ignore_errors: true
+
+- name: "Ztwim | Record failure if no SPIFFE/SPIRE admission webhook is registered"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['ztwim: no spiffe/spire MutatingWebhookConfiguration registered -- workload identity injection is not wired up even if the operator Deployment is Running'] }}"
+  when: >-
+    hc_ztwim_webhooks is failed or
+    (
+      hc_ztwim_webhooks.resources | default([])
+      | selectattr('metadata.name', 'defined')
+      | selectattr('metadata.name', 'search', '(?i)spi(ffe|re)')
+      | list | length == 0
+    )
