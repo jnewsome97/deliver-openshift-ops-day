@@ -51,6 +51,40 @@
   delay: 10
   when: ACTION == "provision"
 
+# RHACS's legacy scanner-db Postgres data directory is backed by an emptyDir
+# with no size limit and no ephemeral-storage request/limit on the container,
+# so the scheduler has zero disk-footprint awareness for it and will happily
+# stack it (and its replacement, after eviction) back onto an already
+# disk-pressured node. Measured steady-state usage on a live cluster is ~8Gi
+# after the scanner's CVE data is loaded, growing higher during WAL/vacuum
+# activity, so request/limit are set well above that. central-db,
+# scanner-v4-db, and scanner-v4-indexer/matcher are PVC-backed and aren't
+# affected by this. The Central CR is continuously reconciled by the StackRox
+# operator, so this patches the CR spec (the desired state the operator reads
+# from) rather than the child Deployment directly, which the operator would
+# otherwise revert on its next reconcile.
+- name: "Cluster cleanup final | Set ephemeral-storage requests/limits on RHACS legacy scanner-db"
+  kubernetes.core.k8s:
+    state: patched
+    api_version: platform.stackrox.io/v1alpha1
+    kind: Central
+    name: stackrox-central-services
+    namespace: stackrox
+    definition:
+      spec:
+        scanner:
+          db:
+            resources:
+              requests:
+                ephemeral-storage: 8Gi
+              limits:
+                ephemeral-storage: 16Gi
+  when:
+    - ACTION == "provision"
+    - module_enable_security | default(false) | bool
+      or module_enable_ztwim | default(false) | bool
+      or module_enable_vault | default(false) | bool
+
 - name: Skip cleanup on destroy
   when: ACTION == "destroy"
   debug:
