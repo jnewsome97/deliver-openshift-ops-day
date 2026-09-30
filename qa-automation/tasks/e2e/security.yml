@@ -1,0 +1,93 @@
+---
+# Security module (module_enable_security): RHACS (content/modules/ROOT/pages/module-15-acs.adoc).
+#
+# SCOPE NOTE: the real lab exercise also (a) patches the cluster-wide
+# `image.config.openshift.io/cluster` singleton's allowedRegistries, and (b)
+# creates a SecurityPolicy with KILL_POD_ENFORCEMENT that matches on process
+# name (apk) with no namespace scoping, i.e. it would kill ANY pod on the
+# cluster running apk, not just this test's own workload. Both are cluster-
+# wide/destructive-by-nature and can't be made qa-e2e-isolated the way a
+# namespaced resource can -- automating them here risks killing an unrelated
+# learner's pods or reverting their in-progress registry change if this runs
+# anywhere near a live session. Deliberately left out. What's automated below
+# is the part that safely isolates to its own namespace: deploying a
+# vulnerable workload and confirming RHACS actually picks it up.
+#
+# The compliance scan schedule setup is pure RHACS-console-UI (no CLI/API
+# equivalent shown in the lab), so it's not covered here either -- the
+# healthcheck ProfileBundle/CSV checks (tasks/security.yml) already confirm
+# the compliance operator side is functional.
+
+- name: "Security | Deploy, validate, and clean up qa-e2e vulnerable workload"
+  block:
+    - name: "Security | Create qa-e2e-security namespace"
+      kubernetes.core.k8s:
+        state: present
+        api_version: v1
+        kind: Namespace
+        name: qa-e2e-security
+
+    # OWASP Juice Shop is a deliberately vulnerable web app (same class of
+    # target the lab's own demo-applications repo deploys, e.g. dvwa/
+    # log4shell) -- reliably has known CVEs for RHACS's scanner to flag.
+    - name: "Security | Deploy vulnerable qa-e2e-vuln-app workload"
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: qa-e2e-vuln-app
+            namespace: qa-e2e-security
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: qa-e2e-vuln-app
+            template:
+              metadata:
+                labels:
+                  app: qa-e2e-vuln-app
+              spec:
+                containers:
+                  - name: juice-shop
+                    image: docker.io/bkimminich/juice-shop
+                    ports:
+                      - containerPort: 3000
+
+    - name: "Security | Wait for qa-e2e-vuln-app readiness"
+      ansible.builtin.command: oc wait --for=condition=Available=True -n qa-e2e-security deployment qa-e2e-vuln-app --timeout 60s
+      register: command_r
+      until: command_r.rc == 0
+      retries: 3
+
+    # RHACS's admission controller/scanner reconciles known deployments into
+    # its own (non-k8s-CRD) datastore, which isn't readable via k8s_info --
+    # confirming a violation/vulnerability actually registered in RHACS
+    # itself would need the Central REST/GraphQL API, and this lab's RHACS
+    # auth is wired to reuse OCP console credentials via OIDC (per the
+    # module's login instructions), not a confirmed headless-friendly
+    # API token/basic-auth path. Rather than guess at undocumented
+    # credentials, stop at "the vulnerable workload is actually running" --
+    # that's the precondition RHACS needs to have anything to scan.
+    - name: "Security | Record note that RHACS-side detection isn't verified"
+      ansible.builtin.debug:
+        msg: >-
+          qa-e2e-vuln-app deployed and Available; RHACS Central
+          vulnerability-scan/violation confirmation was not automated here
+          (no confirmed headless Central API credentials -- see comments).
+  always:
+    - name: "Security | Delete qa-e2e-security namespace"
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: Namespace
+        name: qa-e2e-security
+
+    - name: "Security | Wait for qa-e2e-security namespace to be deleted"
+      ansible.builtin.command: oc get namespace qa-e2e-security
+      register: command_r
+      until: command_r.rc == 1
+      failed_when: false
+      retries: 12
+      delay: 5

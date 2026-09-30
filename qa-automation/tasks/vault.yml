@@ -1,0 +1,47 @@
+---
+# Vault module (module_enable_vault).
+# Namespace/labels match ocp4_days_workload_vault's own readiness wait:
+# the vault server Pod, Running with all containers ready.
+
+# Check namespace phase explicitly before the pod check below, so a stuck
+# "Terminating" namespace (finalizer hang from a prior destroy, observed on
+# a live claim during this review) is reported as its own diagnostic instead
+# of surfacing only as an opaque "vault server pod not found".
+- name: "Vault | Get vault namespace"
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: vault
+  register: hc_vault_ns
+  ignore_errors: true
+
+- name: "Vault | Record failure if vault namespace is missing or Terminating"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['vault: namespace vault is missing or stuck Terminating (status: ' + (hc_vault_ns.resources[0].status.phase | default('missing')) + ')'] }}"
+  when: >-
+    hc_vault_ns is failed or
+    hc_vault_ns.resources | default([]) | length == 0 or
+    hc_vault_ns.resources[0].status.phase | default('') != 'Active'
+
+- name: "Vault | Get Vault server pod"
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: vault
+    label_selectors:
+      - "app.kubernetes.io/name=vault"
+      - "component=server"
+  register: hc_vault_pod
+  ignore_errors: true
+
+- name: "Vault | Record failure if Vault server pod is missing or not ready"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['vault: vault server pod not Running/ready in vault namespace'] }}"
+  when: >-
+    hc_vault_pod is failed or
+    hc_vault_pod.resources | default([]) | length == 0 or
+    hc_vault_pod.resources[0].status.phase | default('') != 'Running' or
+    (
+      hc_vault_pod.resources[0].status.containerStatuses | default([])
+      | selectattr('ready', 'equalto', true) | list | length == 0
+    )

@@ -1,0 +1,85 @@
+---
+# Security module (module_enable_security): RHACS Central + Compliance
+# Operator. Namespaces/names match ocp4_workload_rhacs_v2 (stackrox/central)
+# and ocp4_days_workload_compliance_operator (openshift-compliance).
+
+- name: "Security | Get RHACS central deployment"
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: central
+    namespace: stackrox
+  register: hc_security_central
+  ignore_errors: true
+
+- name: "Security | Record failure if RHACS central is missing or not ready"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['security: Deployment central not ready in stackrox namespace'] }}"
+  when: >-
+    hc_security_central is failed or
+    hc_security_central.resources | default([]) | length == 0 or
+    (hc_security_central.resources[0].status.readyReplicas | default(0) | int) < 1
+
+- name: "Security | Get compliance-operator ClusterServiceVersion"
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    namespace: openshift-compliance
+  register: hc_security_compliance_csvs
+  ignore_errors: true
+
+- name: "Security | Record failure if compliance-operator CSV has not succeeded"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['security: compliance-operator CSV not Succeeded in openshift-compliance namespace'] }}"
+  when: >-
+    hc_security_compliance_csvs is failed or
+    (
+      hc_security_compliance_csvs.resources | default([])
+      | selectattr('metadata.name', 'match', 'compliance-operator.*')
+      | selectattr('status.phase', 'equalto', 'Succeeded')
+      | list | length == 0
+    )
+
+# ocp4_days_workload_compliance_operator itself waits for exactly this:
+# both ProfileBundles parsed and reporting VALID. Without it, the Compliance
+# Operator UI exists but has no usable scan profiles for the module content.
+- name: "Security | Get ProfileBundles"
+  kubernetes.core.k8s_info:
+    api_version: compliance.openshift.io/v1alpha1
+    kind: ProfileBundle
+    namespace: openshift-compliance
+  register: hc_security_profilebundles
+  ignore_errors: true
+
+- name: "Security | Record failure if ProfileBundles are missing or not VALID"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['security: expected 2 VALID ProfileBundles (ocp4, rhcos4) in openshift-compliance, found ' + (hc_security_profilebundles.resources | default([]) | selectattr('status.dataStreamStatus', 'defined') | selectattr('status.dataStreamStatus', 'equalto', 'VALID') | list | length | string)] }}"
+  when: >-
+    hc_security_profilebundles is failed or
+    (
+      hc_security_profilebundles.resources | default([])
+      | selectattr('status.dataStreamStatus', 'defined')
+      | selectattr('status.dataStreamStatus', 'equalto', 'VALID')
+      | list | length < 2
+    )
+
+# ocp4_workload_rhacs_console_embed patches Central's route from the
+# operator's default passthrough to reencrypt specifically so Showroom can
+# iframe-embed the RHACS console. If it's still passthrough, the embed is
+# broken even though Central itself is healthy.
+- name: "Security | Get RHACS Central route"
+  kubernetes.core.k8s_info:
+    api_version: route.openshift.io/v1
+    kind: Route
+    name: central
+    namespace: stackrox
+  register: hc_security_central_route
+  ignore_errors: true
+
+- name: "Security | Record failure if Central route is not patched to reencrypt"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['security: Central route in stackrox is not reencrypt (Showroom iframe embed will be blocked by X-Frame-Options)'] }}"
+  when: >-
+    hc_security_central_route is failed or
+    hc_security_central_route.resources | default([]) | length == 0 or
+    hc_security_central_route.resources[0].spec.tls.termination | default('') != 'reencrypt'

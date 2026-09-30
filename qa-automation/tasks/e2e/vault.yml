@@ -1,0 +1,431 @@
+---
+# Vault / secrets-management module (module_enable_vault).
+# Mirrors content/modules/ROOT/pages/module-16-secrets-management.adoc's two
+# consumption patterns: the Vault Agent Injector (files under
+# /vault/secrets/) and External Secrets Operator (synced Kubernetes Secret).
+#
+# healthcheck's tasks/vault.yml already confirms the vault namespace is
+# Active and the server pod is Running -- this file focuses on the actual
+# learner flow: configuring Vault auth/policy, writing a secret, consuming it
+# two ways, and validating each.
+#
+# ISOLATION: Vault itself is single-instance per claim (there's no per-test
+# Vault to spin up), so this can't be namespace-isolated the way Module 1's
+# quick-demo project is. Instead every resource name and secret path created
+# here is prefixed qa-e2e- and deliberately never reuses the literal names
+# the lab page tells a learner to type (`vault-role`, `read-policy`,
+# `secret/login`, `secret/my-first-secret`, `secret/my-second-secret`,
+# `vault-secrets-app`, `vault-backend`, `sync-my-second-secret`,
+# `my-second-secret-sync`, `eso-vault-test`) -- so a learner mid-exercise on
+# this page is never affected by this running concurrently.
+#
+# CLEANUP ORDER MATTERS: a live test cluster used during this review was
+# found with its `vault` namespace stuck Terminating on an orphaned
+# ExternalSecret finalizer, left behind after External Secrets Operator had
+# already been uninstalled -- the finalizer's controller was gone, so it
+# could never clear. To avoid ever reproducing that: cleanup below always
+# deletes the ExternalSecret first and waits for it to fully disappear
+# (confirming its finalizer cleared while ESO's controller is still running)
+# before removing anything else, and this file never uninstalls the ESO
+# Helm release itself -- it's shared infrastructure the learner's own
+# "Install External Secrets Operator" step depends on, so it's left in place
+# rather than torn down as part of test cleanup.
+
+# -- Configure Vault (idempotent -- safe even if a learner already did this) -
+
+- name: "Vault | Enable Kubernetes auth method"
+  ansible.builtin.command: >-
+    oc exec -n vault vault-0 -- sh -c
+    "VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=root vault auth enable kubernetes"
+  register: vault_auth_enable
+  changed_when: "'Success' in vault_auth_enable.stdout"
+  failed_when: >-
+    vault_auth_enable.rc != 0 and
+    'already in use' not in vault_auth_enable.stderr
+
+- name: "Vault | Configure Kubernetes auth backend"
+  ansible.builtin.command: >-
+    oc exec -n vault vault-0 -- sh -c
+    "VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=root vault write auth/kubernetes/config
+    token_reviewer_jwt=\"$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)\"
+    kubernetes_host=\"https://kubernetes.default.svc:443\"
+    kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+  register: vault_auth_config
+  changed_when: true
+  failed_when: vault_auth_config.rc != 0
+
+- name: "Vault | Enable KV v2 secrets engine at secret/"
+  ansible.builtin.command: >-
+    oc exec -n vault vault-0 -- sh -c
+    "VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=root vault secrets enable -path=secret kv-v2 2>/dev/null || true"
+  changed_when: false
+
+- name: "Vault | Get Vault pod service account audience"
+  ansible.builtin.command: >-
+    oc exec -n vault vault-0 -- sh -c
+    "cat /var/run/secrets/kubernetes.io/serviceaccount/token | cut -d. -f2 | base64 -d 2>/dev/null | sed -n 's/.*\"aud\":\[\"\([^\"]*\)\".*/\1/p'"
+  register: vault_aud
+  changed_when: false
+  failed_when: vault_aud.rc != 0 or vault_aud.stdout | length == 0
+
+# -- Agent Injector pattern: qa-e2e secret + policy + role + app -----------
+
+- name: "Vault | Deploy, validate, and clean up Agent Injector pattern"
+  block:
+    - name: "Vault | Write qa-e2e test secret"
+      ansible.builtin.command: >-
+        oc exec -n vault vault-0 -- sh -c
+        "VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=root vault kv put secret/qa-e2e-test-secret username=qa-e2e-user password=qa-e2e-password"
+      register: qa_e2e_secret_write
+      changed_when: true
+      failed_when: qa_e2e_secret_write.rc != 0
+
+    - name: "Vault | Write qa-e2e read policy (scoped to the qa-e2e secret only)"
+      ansible.builtin.shell: >-
+        echo 'path "secret/data/qa-e2e-test-secret" { capabilities = ["read"] }' |
+        oc exec -i -n vault vault-0 -- sh -c
+        "VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=root vault policy write qa-e2e-read-policy -"
+      changed_when: true
+
+    - name: "Vault | Create qa-e2e Kubernetes auth role"
+      ansible.builtin.command: >-
+        oc exec -n vault vault-0 -- sh -c
+        "VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=root vault write auth/kubernetes/role/qa-e2e-vault-role
+        bound_service_account_names=qa-e2e-vault-sa
+        bound_service_account_namespaces=vault
+        policies=qa-e2e-read-policy
+        ttl=15m
+        audience={{ vault_aud.stdout }}"
+      register: qa_e2e_role_write
+      changed_when: true
+      failed_when: qa_e2e_role_write.rc != 0
+
+    - name: "Vault | Deploy qa-e2e Agent Injector consumer app"
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          - apiVersion: v1
+            kind: ServiceAccount
+            metadata:
+              name: qa-e2e-vault-sa
+              namespace: vault
+          - apiVersion: apps/v1
+            kind: Deployment
+            metadata:
+              name: qa-e2e-vault-injector-app
+              namespace: vault
+              labels:
+                app: qa-e2e-vault-injector-app
+            spec:
+              replicas: 1
+              selector:
+                matchLabels:
+                  app: qa-e2e-vault-injector-app
+              template:
+                metadata:
+                  labels:
+                    app: qa-e2e-vault-injector-app
+                  annotations:
+                    vault.hashicorp.com/agent-inject: "true"
+                    vault.hashicorp.com/agent-inject-status: "update"
+                    vault.hashicorp.com/role: "qa-e2e-vault-role"
+                    vault.hashicorp.com/agent-inject-address: "http://vault.vault.svc:8200"
+                    vault.hashicorp.com/agent-inject-secret-qa-e2e: "secret/qa-e2e-test-secret"
+                    # {% raw %} protects HashiCorp's own Consul-Template syntax
+                    # below (its {{ }} delimiters clash with Ansible's Jinja2,
+                    # which renders this whole `definition:` block) from being
+                    # parsed as an Ansible template instead of passed through
+                    # literally to the Vault Agent.
+                    vault.hashicorp.com/agent-inject-template-qa-e2e: |
+                      {% raw %}{{- with secret "secret/qa-e2e-test-secret" -}}
+                      username={{ .Data.data.username }}
+                      password={{ .Data.data.password }}
+                      {{- end }}{% endraw %}
+                spec:
+                  serviceAccountName: qa-e2e-vault-sa
+                  containers:
+                    - name: app
+                      image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+                      command: ["sleep", "infinity"]
+
+    - name: "Vault | Wait for qa-e2e Agent Injector app to be ready"
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: qa-e2e-vault-injector-app
+        namespace: vault
+      register: qa_e2e_injector_deploy
+      until: >-
+        qa_e2e_injector_deploy.resources | default([]) | length > 0 and
+        (qa_e2e_injector_deploy.resources[0].status.readyReplicas | default(0) | int) >= 1
+      retries: 15
+      delay: 5
+
+    - name: "Vault | Get qa-e2e Agent Injector pod"
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: vault
+        label_selectors:
+          - app=qa-e2e-vault-injector-app
+      register: qa_e2e_injector_pod
+      failed_when: qa_e2e_injector_pod.resources | default([]) | length == 0
+
+    - name: "Vault | Confirm injected secret file content matches"
+      ansible.builtin.command: >-
+        oc exec -n vault {{ qa_e2e_injector_pod.resources[0].metadata.name }} -c app --
+        cat /vault/secrets/qa-e2e
+      register: qa_e2e_injected_content
+      changed_when: false
+      failed_when: >-
+        'username=qa-e2e-user' not in qa_e2e_injected_content.stdout or
+        'password=qa-e2e-password' not in qa_e2e_injected_content.stdout
+  always:
+    - name: "Vault | Delete qa-e2e Agent Injector app and service account"
+      kubernetes.core.k8s:
+        state: absent
+        api_version: apps/v1
+        kind: Deployment
+        name: qa-e2e-vault-injector-app
+        namespace: vault
+      ignore_errors: true
+
+    - name: "Vault | Delete qa-e2e Agent Injector service account"
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: ServiceAccount
+        name: qa-e2e-vault-sa
+        namespace: vault
+      ignore_errors: true
+
+    - name: "Vault | Delete qa-e2e Kubernetes auth role"
+      ansible.builtin.command: >-
+        oc exec -n vault vault-0 -- sh -c
+        "VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=root vault delete auth/kubernetes/role/qa-e2e-vault-role"
+      ignore_errors: true
+      changed_when: true
+
+    - name: "Vault | Delete qa-e2e read policy"
+      ansible.builtin.command: >-
+        oc exec -n vault vault-0 -- sh -c
+        "VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=root vault policy delete qa-e2e-read-policy"
+      ignore_errors: true
+      changed_when: true
+
+    - name: "Vault | Delete qa-e2e test secret"
+      ansible.builtin.command: >-
+        oc exec -n vault vault-0 -- sh -c
+        "VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=root vault kv metadata delete secret/qa-e2e-test-secret"
+      ignore_errors: true
+      changed_when: true
+
+# -- External Secrets Operator pattern: qa-e2e SecretStore + ExternalSecret -
+
+- name: "Vault | Deploy, validate, and clean up ESO sync pattern"
+  block:
+    - name: "Vault | Write qa-e2e ESO test secret"
+      ansible.builtin.command: >-
+        oc exec -n vault vault-0 -- sh -c
+        "VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=root vault kv put secret/qa-e2e-eso-test username=qa-e2e-eso-user password=qa-e2e-eso-password"
+      changed_when: true
+
+    # Raw `helm` CLI (not kubernetes.core.helm) -- the module hard-rejects
+    # Helm v4 binaries (>=4.0.0 not supported). Mirrors the same raw-helm
+    # pattern automation/ansible/roles/ocp4_days_workload_vault already uses
+    # to install Vault itself, so this isn't introducing a new convention.
+    #
+    # Unlike that provisioning-time execution environment, the Showroom
+    # pod's own runner container (where this e2e suite actually runs) has
+    # no helm binary on PATH at all -- fetch a pinned v3 release into a
+    # scratch dir and use its full path instead of relying on PATH.
+    - name: "Vault | Check for an existing helm binary on PATH"
+      ansible.builtin.command: which helm
+      register: eso_helm_which
+      changed_when: false
+      failed_when: false
+
+    - name: "Vault | Download pinned helm v3 binary if none is on PATH"
+      when: eso_helm_which.rc != 0
+      block:
+        - name: "Vault | Create scratch dir for helm binary"
+          ansible.builtin.file:
+            path: /tmp/qa-e2e-helm
+            state: directory
+            mode: "0755"
+
+        - name: "Vault | Download and extract helm v3.16.4"
+          ansible.builtin.unarchive:
+            src: https://get.helm.sh/helm-v3.16.4-linux-amd64.tar.gz
+            dest: /tmp/qa-e2e-helm
+            remote_src: true
+
+        - name: "Vault | Set helm binary path to the downloaded copy"
+          ansible.builtin.set_fact:
+            eso_helm_bin: /tmp/qa-e2e-helm/linux-amd64/helm
+
+    - name: "Vault | Set helm binary path to the one already on PATH"
+      when: eso_helm_which.rc == 0
+      ansible.builtin.set_fact:
+        eso_helm_bin: "{{ eso_helm_which.stdout | trim }}"
+
+    - name: "Vault | Add external-secrets Helm repo"
+      ansible.builtin.command: "{{ eso_helm_bin }} repo add external-secrets https://charts.external-secrets.io"
+      register: eso_repo_add
+      changed_when: "'has been added' in eso_repo_add.stdout"
+      failed_when: eso_repo_add.rc != 0 and 'already exists' not in eso_repo_add.stderr
+      ignore_errors: true
+
+    - name: "Vault | Update external-secrets Helm repo"
+      ansible.builtin.command: "{{ eso_helm_bin }} repo update external-secrets"
+      changed_when: true
+
+    - name: "Vault | Install External Secrets Operator (idempotent)"
+      ansible.builtin.command: >-
+        {{ eso_helm_bin }} upgrade --install external-secrets external-secrets/external-secrets
+        --namespace external-secrets --create-namespace
+        --set installCRDs=true
+        --wait --timeout 10m0s
+      register: eso_helm_install
+      changed_when: true
+      failed_when: eso_helm_install.rc != 0
+
+    - name: "Vault | Wait for ESO deployment to be ready"
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        namespace: external-secrets
+        label_selectors:
+          - app.kubernetes.io/name=external-secrets
+      register: eso_deploy
+      until: >-
+        eso_deploy.resources | default([]) | length > 0 and
+        (eso_deploy.resources[0].status.readyReplicas | default(0) | int) >= 1
+      retries: 20
+      delay: 5
+
+    - name: "Vault | Apply qa-e2e vault token, SecretStore, and ExternalSecret"
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          - apiVersion: v1
+            kind: Secret
+            metadata:
+              name: qa-e2e-vault-token
+              namespace: vault
+            type: Opaque
+            stringData:
+              token: root
+          - apiVersion: external-secrets.io/v1
+            kind: SecretStore
+            metadata:
+              name: qa-e2e-vault-backend
+              namespace: vault
+            spec:
+              provider:
+                vault:
+                  server: "http://vault.vault.svc:8200"
+                  path: "secret"
+                  version: "v2"
+                  auth:
+                    tokenSecretRef:
+                      name: qa-e2e-vault-token
+                      key: token
+          - apiVersion: external-secrets.io/v1
+            kind: ExternalSecret
+            metadata:
+              name: qa-e2e-sync-secret
+              namespace: vault
+            spec:
+              refreshInterval: 1h
+              secretStoreRef:
+                name: qa-e2e-vault-backend
+                kind: SecretStore
+              target:
+                name: qa-e2e-secret-sync
+                creationPolicy: Owner
+              data:
+                - secretKey: username
+                  remoteRef:
+                    key: qa-e2e-eso-test
+                    property: username
+                - secretKey: password
+                  remoteRef:
+                    key: qa-e2e-eso-test
+                    property: password
+
+    - name: "Vault | Wait for qa-e2e ExternalSecret to be Ready"
+      kubernetes.core.k8s_info:
+        api_version: external-secrets.io/v1
+        kind: ExternalSecret
+        name: qa-e2e-sync-secret
+        namespace: vault
+      register: qa_e2e_es
+      until: >-
+        qa_e2e_es.resources | default([]) | length > 0 and
+        (
+          qa_e2e_es.resources[0].status.conditions | default([])
+          | selectattr('type', 'equalto', 'Ready')
+          | selectattr('status', 'equalto', 'True')
+          | list | length > 0
+        )
+      retries: 15
+      delay: 5
+
+    - name: "Vault | Get qa-e2e synced Secret"
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Secret
+        name: qa-e2e-secret-sync
+        namespace: vault
+      register: qa_e2e_synced_secret
+      failed_when: >-
+        qa_e2e_synced_secret.resources | default([]) | length == 0 or
+        (qa_e2e_synced_secret.resources[0].data.username | default('') | b64decode) != 'qa-e2e-eso-user' or
+        (qa_e2e_synced_secret.resources[0].data.password | default('') | b64decode) != 'qa-e2e-eso-password'
+  always:
+    # Delete the ExternalSecret FIRST and confirm it's actually gone before
+    # touching anything else -- this is the exact ordering that was missing
+    # on the live cluster where an ExternalSecret's finalizer was orphaned
+    # after ESO's controller was already removed. The Helm release itself is
+    # intentionally left installed (see header comment).
+    - name: "Vault | Delete qa-e2e ExternalSecret"
+      kubernetes.core.k8s:
+        state: absent
+        api_version: external-secrets.io/v1
+        kind: ExternalSecret
+        name: qa-e2e-sync-secret
+        namespace: vault
+      ignore_errors: true
+
+    - name: "Vault | Wait for qa-e2e ExternalSecret finalizer to clear"
+      kubernetes.core.k8s_info:
+        api_version: external-secrets.io/v1
+        kind: ExternalSecret
+        name: qa-e2e-sync-secret
+        namespace: vault
+      register: qa_e2e_es_deleted
+      until: qa_e2e_es_deleted.resources | default([]) | length == 0
+      retries: 12
+      delay: 5
+      ignore_errors: true
+
+    - name: "Vault | Delete qa-e2e SecretStore, token Secret, and synced Secret"
+      kubernetes.core.k8s:
+        state: absent
+        api_version: "{{ item.api_version }}"
+        kind: "{{ item.kind }}"
+        name: "{{ item.name }}"
+        namespace: vault
+      loop:
+        - { api_version: "external-secrets.io/v1", kind: SecretStore, name: qa-e2e-vault-backend }
+        - { api_version: v1, kind: Secret, name: qa-e2e-vault-token }
+        - { api_version: v1, kind: Secret, name: qa-e2e-secret-sync }
+      ignore_errors: true
+
+    - name: "Vault | Delete qa-e2e ESO test secret"
+      ansible.builtin.command: >-
+        oc exec -n vault vault-0 -- sh -c
+        "VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=root vault kv metadata delete secret/qa-e2e-eso-test"
+      ignore_errors: true
+      changed_when: true

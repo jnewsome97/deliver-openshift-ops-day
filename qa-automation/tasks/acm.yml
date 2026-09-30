@@ -1,0 +1,120 @@
+---
+# ACM module (module_enable_acm).
+# Mirrors the readiness condition ocp4_workload_rhacm_temp itself waits on
+# during provisioning: MultiClusterHub reaching status.phase == Running.
+
+- name: "Acm | Get MultiClusterHub instance"
+  kubernetes.core.k8s_info:
+    api_version: operator.open-cluster-management.io/v1
+    kind: MultiClusterHub
+    name: multiclusterhub
+    namespace: open-cluster-management
+  register: hc_acm_mch
+  ignore_errors: true
+
+- name: "Acm | Record failure if MultiClusterHub is missing or not Running"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['acm: MultiClusterHub multiclusterhub not Running in open-cluster-management'] }}"
+  when: >-
+    hc_acm_mch is failed or
+    hc_acm_mch.resources | default([]) | length == 0 or
+    hc_acm_mch.resources[0].status.phase | default('') != 'Running'
+
+# ocp4_workload_acm_multicluster_observability provisions a NooBaa-backed
+# Object Bucket Claim and a MultiClusterObservability CR on top of the hub.
+# MCH Running only proves the hub itself is up; it says nothing about
+# whether observability (used by the ACM module content) actually came up.
+- name: "Acm | Get MultiClusterObservability instance"
+  kubernetes.core.k8s_info:
+    api_version: observability.open-cluster-management.io/v1beta2
+    kind: MultiClusterObservability
+  register: hc_acm_mco
+  ignore_errors: true
+
+- name: "Acm | Record failure if MultiClusterObservability is missing or not Ready"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['acm: MultiClusterObservability not Ready'] }}"
+  when: >-
+    hc_acm_mco is failed or
+    hc_acm_mco.resources | default([]) | length == 0 or
+    (
+      hc_acm_mco.resources[0].status.conditions | default([])
+      | selectattr('type', 'equalto', 'Ready')
+      | selectattr('status', 'equalto', 'True')
+      | list | length == 0
+    )
+
+# Confirm the underlying object storage bucket the CR depends on actually
+# has connection data populated, not just that the ConfigMap exists.
+- name: "Acm | Get observer-bucket ConfigMap"
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: ConfigMap
+    name: observer-bucket
+    namespace: open-cluster-management-observability
+  register: hc_acm_bucket_cm
+  ignore_errors: true
+
+- name: "Acm | Record failure if observer-bucket ConfigMap is missing bucket data"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['acm: observer-bucket ConfigMap missing or has no BUCKET_NAME in open-cluster-management-observability'] }}"
+  when: >-
+    hc_acm_bucket_cm is failed or
+    hc_acm_bucket_cm.resources | default([]) | length == 0 or
+    hc_acm_bucket_cm.resources[0].data.BUCKET_NAME | default('') | length == 0
+
+# The actual substance of the ACM module is a real managed cluster: a
+# HyperShift HostedCluster running on local KubeVirt infra (ocp4_workload_hcp_kubevirt
+# + ocp4_workload_create_hcp_cluster, both in _hcp_workloads alongside the MCH
+# itself). MultiClusterHub being Running says nothing about whether that
+# managed cluster ever came up -- without this check, a broken HCP cluster
+# (the thing students actually interact with for fleet-management exercises)
+# would go completely undetected.
+- name: "Acm | Get managed-hcp HostedCluster"
+  kubernetes.core.k8s_info:
+    api_version: hypershift.openshift.io/v1beta1
+    kind: HostedCluster
+    name: managed-hcp
+    namespace: clusters
+  register: hc_acm_hostedcluster
+  ignore_errors: true
+
+- name: "Acm | Record failure if managed-hcp HostedCluster is missing or not Available"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['acm: HostedCluster managed-hcp not Available in clusters namespace'] }}"
+  when: >-
+    hc_acm_hostedcluster is failed or
+    hc_acm_hostedcluster.resources | default([]) | length == 0 or
+    (
+      hc_acm_hostedcluster.resources[0].status.conditions | default([])
+      | selectattr('type', 'equalto', 'Available')
+      | selectattr('status', 'equalto', 'True')
+      | list | length == 0
+    )
+
+# ocp4_workload_hcp_kubevirt (also in _hcp_workloads, gated by module_enable_acm
+# rather than module_enable_virt -- see common.yaml) patches HyperConverged to
+# re-enable boot image import and waits for this exact DataSource to go Ready,
+# specifically so the rhel9 boot volume used by Module 11's VM exercises
+# exists. It's easy to miss because nothing about it is virt-module-gated.
+- name: "Acm | Get rhel9 VM boot source DataSource"
+  kubernetes.core.k8s_info:
+    api_version: cdi.kubevirt.io/v1beta1
+    kind: DataSource
+    name: rhel9
+    namespace: openshift-virtualization-os-images
+  register: hc_acm_rhel9_datasource
+  ignore_errors: true
+
+- name: "Acm | Record failure if rhel9 boot source DataSource is missing or not Ready"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['acm: rhel9 DataSource not Ready in openshift-virtualization-os-images (Module 11 VM boot volume unavailable)'] }}"
+  when: >-
+    hc_acm_rhel9_datasource is failed or
+    hc_acm_rhel9_datasource.resources | default([]) | length == 0 or
+    (
+      hc_acm_rhel9_datasource.resources[0].status.conditions | default([])
+      | selectattr('type', 'equalto', 'Ready')
+      | selectattr('status', 'equalto', 'True')
+      | list | length == 0
+    )
