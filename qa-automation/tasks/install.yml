@@ -1,0 +1,77 @@
+---
+# Installation & Verification module (module_enable_install).
+# No dedicated workload -- this module teaches post-install verification
+# against the stock cluster, so the checks mirror what
+# content/modules/ROOT/pages/module-01-installation.adoc has the learner run:
+# ClusterOperators, MachineConfigPools, and etcd/control-plane health.
+
+- name: "Install | Get all ClusterOperators"
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: ClusterOperator
+  register: hc_install_operators
+  ignore_errors: true
+
+- name: "Install | Record failure if any ClusterOperator is not Available or is Degraded"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['install: ClusterOperator ' + item.metadata.name + ' is not healthy (Available/Degraded)'] }}"
+  loop: "{{ hc_install_operators.resources | default([]) }}"
+  when: >-
+    hc_install_operators is failed or
+    (
+      (
+        item.status.conditions | default([])
+        | selectattr('type', 'equalto', 'Available')
+        | selectattr('status', 'equalto', 'True')
+        | list | length == 0
+      ) or
+      (
+        item.status.conditions | default([])
+        | selectattr('type', 'equalto', 'Degraded')
+        | selectattr('status', 'equalto', 'True')
+        | list | length > 0
+      )
+    ) and
+    (
+      item.status.conditions | default([])
+      | selectattr('type', 'equalto', 'Available')
+      | selectattr('reason', 'equalto', 'Unmanaged')
+      | list | length == 0
+    )
+
+- name: "Install | Get MachineConfigPools"
+  kubernetes.core.k8s_info:
+    api_version: machineconfiguration.openshift.io/v1
+    kind: MachineConfigPool
+  register: hc_install_mcp
+  ignore_errors: true
+
+- name: "Install | Record failure if any MachineConfigPool is Degraded"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['install: MachineConfigPool ' + item.metadata.name + ' is Degraded'] }}"
+  loop: "{{ hc_install_mcp.resources | default([]) }}"
+  when: >-
+    hc_install_mcp is failed or
+    (
+      item.status.conditions | default([])
+      | selectattr('type', 'equalto', 'Degraded')
+      | selectattr('status', 'equalto', 'True')
+      | list | length > 0
+    )
+
+- name: "Install | etcd pods are Running"
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: openshift-etcd
+    label_selectors:
+      - app=etcd
+  register: hc_install_etcd
+  ignore_errors: true
+
+- name: "Install | Record failure if no Running etcd pods found"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['install: no Running etcd pods found in openshift-etcd'] }}"
+  when: >-
+    hc_install_etcd is failed or
+    hc_install_etcd.resources | selectattr('status.phase', 'equalto', 'Running') | list | length == 0

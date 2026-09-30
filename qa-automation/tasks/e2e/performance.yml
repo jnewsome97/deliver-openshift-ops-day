@@ -1,0 +1,136 @@
+---
+# Performance Tuning module (module_enable_performance).
+# Solve/validate sequence covering the HPA portion of
+# content/modules/ROOT/pages/module-10-performance-tuning.adoc: deploy a
+# simple app with CPU requests set, create an HPA against it, and confirm the
+# HPA actually reports a numeric current CPU value rather than sitting at
+# <unknown>. This only proves the metrics pipeline HPA depends on is wired up
+# correctly; it deliberately does NOT install the VPA operator (a cluster-wide
+# operator install/removal is too heavy for a per-run e2e check) and does NOT
+# run a load generator to wait for an actual scale-up event (load-driven
+# scaling is slow and timing-sensitive, and the metrics-flowing check below
+# already covers the part of the module that's prone to breaking).
+#
+# Uses qa-e2e-hpa-demo instead of the module's own perf-tuning namespace so
+# this can never collide with a live learner on the same page.
+
+- name: "Performance | Delete qa-e2e-hpa-demo project"
+  kubernetes.core.k8s:
+    state: absent
+    api_version: project.openshift.io/v1
+    kind: Project
+    name: qa-e2e-hpa-demo
+
+- name: "Performance | Wait for qa-e2e-hpa-demo project to be deleted"
+  ansible.builtin.command: oc get project qa-e2e-hpa-demo
+  register: command_r
+  until: command_r.rc == 1
+  failed_when: false
+  retries: 10
+  delay: 5
+
+- name: "Performance | Run HPA metrics-flowing sequence"
+  block:
+    - name: "Performance | Create qa-e2e-hpa-demo project"
+      kubernetes.core.k8s:
+        state: present
+        api_version: project.openshift.io/v1
+        kind: Project
+        name: qa-e2e-hpa-demo
+
+    - name: "Performance | Deploy a small app with CPU requests set"
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: qa-e2e-hpa-app
+            namespace: qa-e2e-hpa-demo
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: qa-e2e-hpa-app
+            template:
+              metadata:
+                labels:
+                  app: qa-e2e-hpa-app
+              spec:
+                containers:
+                  - name: app
+                    image: registry.access.redhat.com/ubi9/ubi-minimal
+                    command: ["/bin/sh", "-c", "sleep infinity"]
+                    resources:
+                      requests:
+                        cpu: 50m
+                      limits:
+                        cpu: 250m
+
+    - name: "Performance | Wait for the app to be Running"
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: qa-e2e-hpa-demo
+        label_selectors:
+          - app=qa-e2e-hpa-app
+      register: e2e_performance_pod
+      until: >-
+        e2e_performance_pod.resources | default([]) | length > 0 and
+        e2e_performance_pod.resources[0].status.phase | default('') == 'Running'
+      retries: 24
+      delay: 5
+
+    - name: "Performance | Create an HPA against the app"
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: autoscaling/v2
+          kind: HorizontalPodAutoscaler
+          metadata:
+            name: qa-e2e-hpa-app
+            namespace: qa-e2e-hpa-demo
+          spec:
+            scaleTargetRef:
+              apiVersion: apps/v1
+              kind: Deployment
+              name: qa-e2e-hpa-app
+            minReplicas: 1
+            maxReplicas: 3
+            metrics:
+              - type: Resource
+                resource:
+                  name: cpu
+                  target:
+                    type: Utilization
+                    averageUtilization: 50
+
+    - name: "Performance | Confirm the HPA reports a numeric current CPU value"
+      kubernetes.core.k8s_info:
+        api_version: autoscaling/v2
+        kind: HorizontalPodAutoscaler
+        name: qa-e2e-hpa-app
+        namespace: qa-e2e-hpa-demo
+      register: e2e_performance_hpa
+      until: >-
+        e2e_performance_hpa.resources | default([], true) | length > 0 and
+        e2e_performance_hpa.resources[0].status.currentMetrics | default([], true) | length > 0 and
+        e2e_performance_hpa.resources[0].status.currentMetrics[0].resource.current.averageUtilization
+        | default(none) is not none
+      retries: 24
+      delay: 10
+  always:
+    - name: "Performance | Delete qa-e2e-hpa-demo project"
+      kubernetes.core.k8s:
+        state: absent
+        api_version: project.openshift.io/v1
+        kind: Project
+        name: qa-e2e-hpa-demo
+
+    - name: "Performance | Wait for qa-e2e-hpa-demo project to be deleted"
+      ansible.builtin.command: oc get project qa-e2e-hpa-demo
+      register: command_r
+      until: command_r.rc == 1
+      failed_when: false
+      retries: 10
+      delay: 5

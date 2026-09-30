@@ -1,0 +1,52 @@
+---
+# Network Security module (module_enable_netsec).
+# Confirms the stock OVN-Kubernetes plane
+# content/modules/ROOT/pages/module-04-network-security.adoc builds
+# NetworkPolicy/EgressFirewall/AdminNetworkPolicy on top of is healthy.
+
+- name: "Netsec | Network ClusterOperator is healthy"
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: ClusterOperator
+    name: network
+  register: hc_netsec_operator
+  ignore_errors: true
+
+- name: "Netsec | Record failure if network ClusterOperator is not Available"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['netsec: network ClusterOperator not Available'] }}"
+  when: >-
+    hc_netsec_operator is failed or
+    hc_netsec_operator.resources | default([]) | length == 0 or
+    (
+      hc_netsec_operator.resources[0].status.conditions | default([])
+      | selectattr('type', 'equalto', 'Available')
+      | selectattr('status', 'equalto', 'True')
+      | list | length == 0
+    )
+
+- name: "Netsec | Get OVN-Kubernetes pods"
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: openshift-ovn-kubernetes
+  register: hc_netsec_ovn
+  ignore_errors: true
+
+- name: "Netsec | Record failure if no Running OVN-Kubernetes pods found"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['netsec: no Running pods found in openshift-ovn-kubernetes'] }}"
+  when: >-
+    hc_netsec_ovn is failed or
+    hc_netsec_ovn.resources | selectattr('status.phase', 'equalto', 'Running') | list | length == 0
+
+- name: "Netsec | Confirm AdminNetworkPolicy API is served"
+  ansible.builtin.command: oc api-resources --api-group=policy.networking.k8s.io
+  register: hc_netsec_anp_api
+  changed_when: false
+  ignore_errors: true
+
+- name: "Netsec | Record failure if AdminNetworkPolicy API is unavailable"
+  ansible.builtin.set_fact:
+    hc_failures: "{{ hc_failures + ['netsec: policy.networking.k8s.io (AdminNetworkPolicy) API not available'] }}"
+  when: hc_netsec_anp_api is failed or 'adminnetworkpolicies' not in hc_netsec_anp_api.stdout

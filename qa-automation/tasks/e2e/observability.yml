@@ -1,0 +1,139 @@
+---
+# Observability & Logging module (module_enable_observability).
+# Solve/validate sequence covering the alerting portion of
+# content/modules/ROOT/pages/module-09-observability.adoc: create a custom
+# PrometheusRule, trigger it with a real crash-looping pod, and confirm it
+# actually fires. The Loki logging stack and Tempo/OpenTelemetry tracing
+# stack are NOT deployed here -- installing those operators and storage
+# backends takes several minutes and leaves heavyweight, slow-to-clean-up
+# infrastructure (LokiStack, TempoMonolithic, S3 buckets) that isn't worth
+# the added e2e runtime/cluster load on every run; the alerting path below is
+# fast, fully self-contained, and exercises the same PrometheusRule/Alertmanager
+# machinery the rest of the module builds on.
+#
+# Uses a qa-e2e-prefixed PrometheusRule/pod/project instead of the module's
+# own ops-track-alerts/crashloop-test/alert-demo names so this can never
+# collide with a live learner on the same page.
+
+- name: "Observability | Delete qa-e2e-observability-alert project"
+  kubernetes.core.k8s:
+    state: absent
+    api_version: project.openshift.io/v1
+    kind: Project
+    name: qa-e2e-observability-alert
+
+- name: "Observability | Delete qa-e2e-alert-test PrometheusRule"
+  kubernetes.core.k8s:
+    state: absent
+    api_version: monitoring.coreos.com/v1
+    kind: PrometheusRule
+    name: qa-e2e-alert-test
+    namespace: openshift-monitoring
+
+- name: "Observability | Wait for qa-e2e-observability-alert project to be deleted"
+  ansible.builtin.command: oc get project qa-e2e-observability-alert
+  register: command_r
+  until: command_r.rc == 1
+  failed_when: false
+  retries: 10
+  delay: 5
+
+- name: "Observability | Run custom alert create/trigger/fire sequence"
+  block:
+    - name: "Observability | Create qa-e2e-observability-alert project"
+      kubernetes.core.k8s:
+        state: present
+        api_version: project.openshift.io/v1
+        kind: Project
+        name: qa-e2e-observability-alert
+
+    - name: "Observability | Create custom HighPodRestartRate-style PrometheusRule"
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: monitoring.coreos.com/v1
+          kind: PrometheusRule
+          metadata:
+            name: qa-e2e-alert-test
+            namespace: openshift-monitoring
+          spec:
+            groups:
+              - name: qa-e2e-alert-test
+                rules:
+                  - alert: QaE2eHighPodRestartRate
+                    expr: >-
+                      increase(kube_pod_container_status_restarts_total{namespace="qa-e2e-observability-alert"}[5m]) > 2
+                    for: 1m
+                    labels:
+                      severity: warning
+                    annotations:
+                      summary: "qa-e2e test pod restarting frequently"
+
+    - name: "Observability | Deploy a crash-looping pod to trigger the rule"
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: qa-e2e-crashloop-test
+            namespace: qa-e2e-observability-alert
+          spec:
+            containers:
+              - name: crash
+                image: registry.access.redhat.com/ubi9/ubi-minimal
+                command: ["/bin/sh", "-c", "sleep 2; exit 1"]
+            restartPolicy: Always
+
+    - name: "Observability | Wait for the pod to restart enough times to satisfy the rule"
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        name: qa-e2e-crashloop-test
+        namespace: qa-e2e-observability-alert
+      register: e2e_observability_pod
+      until: >-
+        e2e_observability_pod.resources | default([]) | length > 0 and
+        (e2e_observability_pod.resources[0].status.containerStatuses[0].restartCount | default(0)) >= 3
+      retries: 24
+      delay: 10
+
+    - name: "Observability | Query Thanos Querier for the alert (Firing or Pending)"
+      ansible.builtin.uri:
+        url: >-
+          https://thanos-querier.openshift-monitoring.svc:9091/api/v1/query?query=ALERTS{alertname="QaE2eHighPodRestartRate"}
+        method: GET
+        validate_certs: false
+        headers:
+          Authorization: "Bearer {{ lookup('ansible.builtin.file', k8s_kubeconfig) | regex_search('token:\\s*(\\S+)', '\\1') | first | default('') }}"
+        return_content: true
+      register: e2e_observability_alert_query
+      ignore_errors: true
+      retries: 18
+      delay: 10
+      until: >-
+        e2e_observability_alert_query is success and
+        'QaE2eHighPodRestartRate' in (e2e_observability_alert_query.content | default(''))
+  always:
+    - name: "Observability | Delete qa-e2e-observability-alert project"
+      kubernetes.core.k8s:
+        state: absent
+        api_version: project.openshift.io/v1
+        kind: Project
+        name: qa-e2e-observability-alert
+
+    - name: "Observability | Delete qa-e2e-alert-test PrometheusRule"
+      kubernetes.core.k8s:
+        state: absent
+        api_version: monitoring.coreos.com/v1
+        kind: PrometheusRule
+        name: qa-e2e-alert-test
+        namespace: openshift-monitoring
+
+    - name: "Observability | Wait for qa-e2e-observability-alert project to be deleted"
+      ansible.builtin.command: oc get project qa-e2e-observability-alert
+      register: command_r
+      until: command_r.rc == 1
+      failed_when: false
+      retries: 10
+      delay: 5

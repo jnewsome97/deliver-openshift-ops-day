@@ -1,0 +1,189 @@
+---
+# Ingress & Load Balancing module (module_enable_ingress).
+# Solve/validate sequence for
+# content/modules/ROOT/pages/module-03-ingress-load-balancing.adoc: create an
+# edge route, prove the HTTP->HTTPS redirect and HSTS annotations actually
+# change router behavior (not just that the annotation applied). Rate
+# limiting under concurrent load is not automated here -- it's inherently
+# racy/timing-sensitive and its own module content already documents the
+# expected 000/403 mix varies run to run, which doesn't give a stable
+# pass/fail signal for CI.
+#
+# Uses qa-e2e-ingress-demo instead of the module's own ingress-demo project
+# name so this can never collide with a live learner on the same page.
+
+- name: "Ingress | Delete qa-e2e-ingress-demo project"
+  kubernetes.core.k8s:
+    state: absent
+    api_version: project.openshift.io/v1
+    kind: Project
+    name: qa-e2e-ingress-demo
+
+- name: "Ingress | Wait for qa-e2e-ingress-demo project to be deleted"
+  ansible.builtin.command: oc get project qa-e2e-ingress-demo
+  register: command_r
+  until: command_r.rc == 1
+  failed_when: false
+  retries: 10
+  delay: 5
+
+- name: "Ingress | Run route/redirect/HSTS sequence"
+  block:
+    - name: "Ingress | Create qa-e2e-ingress-demo project"
+      kubernetes.core.k8s:
+        state: present
+        api_version: project.openshift.io/v1
+        kind: Project
+        name: qa-e2e-ingress-demo
+
+    - name: "Ingress | Deploy test-app and service"
+      kubernetes.core.k8s:
+        state: present
+        definition: "{{ item }}"
+      loop:
+        - apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: test-app
+            namespace: qa-e2e-ingress-demo
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: test-app
+            template:
+              metadata:
+                labels:
+                  app: test-app
+              spec:
+                containers:
+                  - name: test-app
+                    image: registry.access.redhat.com/ubi9/httpd-24
+                    ports:
+                      - containerPort: 8080
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: test-app
+            namespace: qa-e2e-ingress-demo
+          spec:
+            selector:
+              app: test-app
+            ports:
+              - port: 8080
+                targetPort: 8080
+        - apiVersion: route.openshift.io/v1
+          kind: Route
+          metadata:
+            name: test-app
+            namespace: qa-e2e-ingress-demo
+          spec:
+            to:
+              kind: Service
+              name: test-app
+            tls:
+              termination: edge
+
+    - name: "Ingress | Wait for test-app to roll out"
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: test-app
+        namespace: qa-e2e-ingress-demo
+      register: e2e_ingress_deploy
+      until: >-
+        e2e_ingress_deploy.resources | default([]) | length > 0 and
+        (e2e_ingress_deploy.resources[0].status.readyReplicas | default(0)) >= 1
+      retries: 24
+      delay: 5
+
+    - name: "Ingress | Get Route host"
+      kubernetes.core.k8s_info:
+        api_version: route.openshift.io/v1
+        kind: Route
+        name: test-app
+        namespace: qa-e2e-ingress-demo
+      register: e2e_ingress_route
+      until: >-
+        e2e_ingress_route.resources | default([]) | length > 0 and
+        e2e_ingress_route.resources[0].status.ingress | default([]) | length > 0
+      retries: 12
+      delay: 5
+
+    - name: "Ingress | Confirm HTTPS request succeeds before redirect is configured"
+      ansible.builtin.uri:
+        url: "https://{{ e2e_ingress_route.resources[0].spec.host }}"
+        validate_certs: false
+        status_code: [200, 403]
+      register: e2e_ingress_pre
+      retries: 10
+      delay: 5
+      until: e2e_ingress_pre is success
+
+    - name: "Ingress | Enable HTTP -> HTTPS redirect"
+      kubernetes.core.k8s:
+        state: patched
+        api_version: route.openshift.io/v1
+        kind: Route
+        name: test-app
+        namespace: qa-e2e-ingress-demo
+        definition:
+          spec:
+            tls:
+              insecureEdgeTerminationPolicy: Redirect
+
+    - name: "Ingress | Confirm HTTP now 302 redirects to HTTPS"
+      ansible.builtin.uri:
+        url: "http://{{ e2e_ingress_route.resources[0].spec.host }}"
+        validate_certs: false
+        follow_redirects: none
+        status_code: [302]
+      register: e2e_ingress_redirect
+      retries: 10
+      delay: 5
+      until: e2e_ingress_redirect is success
+
+    - name: "Ingress | Apply HSTS header annotation"
+      kubernetes.core.k8s:
+        state: patched
+        api_version: route.openshift.io/v1
+        kind: Route
+        name: test-app
+        namespace: qa-e2e-ingress-demo
+        definition:
+          metadata:
+            annotations:
+              haproxy.router.openshift.io/hsts_header: "max-age=31536000;includeSubDomains"
+
+    - name: "Ingress | Request the route until the HSTS header appears (router reload can lag the patch)"
+      ansible.builtin.uri:
+        url: "https://{{ e2e_ingress_route.resources[0].spec.host }}"
+        validate_certs: false
+        status_code: [200, 403]
+        return_content: false
+      register: e2e_ingress_hsts
+      retries: 15
+      delay: 5
+      until: >-
+        e2e_ingress_hsts is success and
+        e2e_ingress_hsts.strict_transport_security is defined
+
+    - name: "Ingress | Fail if HSTS header is missing from the response"
+      ansible.builtin.fail:
+        msg: "ingress e2e: strict-transport-security header not found on qa-e2e-ingress-demo route"
+      when: e2e_ingress_hsts.strict_transport_security is not defined
+  always:
+    - name: "Ingress | Delete qa-e2e-ingress-demo project"
+      kubernetes.core.k8s:
+        state: absent
+        api_version: project.openshift.io/v1
+        kind: Project
+        name: qa-e2e-ingress-demo
+
+    - name: "Ingress | Wait for qa-e2e-ingress-demo project to be deleted"
+      ansible.builtin.command: oc get project qa-e2e-ingress-demo
+      register: command_r
+      until: command_r.rc == 1
+      failed_when: false
+      retries: 10
+      delay: 5

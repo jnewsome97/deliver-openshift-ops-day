@@ -1,0 +1,221 @@
+---
+# Network Security module (module_enable_netsec).
+# Solve/validate sequence for
+# content/modules/ROOT/pages/module-04-network-security.adoc's core teaching
+# point: default allow -> deny-all NetworkPolicy blocks traffic -> a scoped
+# allow rule restores it. EgressFirewall/EgressIP/AdminNetworkPolicy are not
+# exercised here since they mutate node-wide or cluster-wide egress behavior,
+# which isn't safe to toggle on a claim another learner may be actively using.
+#
+# Uses qa-e2e-netpol-frontend/qa-e2e-netpol-backend instead of the module's
+# own netpol-frontend/netpol-backend project names so this can never collide
+# with a live learner on the same page.
+
+- name: "Netsec | Delete qa-e2e netpol projects"
+  kubernetes.core.k8s:
+    state: absent
+    api_version: project.openshift.io/v1
+    kind: Project
+    name: "{{ item }}"
+  loop:
+    - qa-e2e-netpol-frontend
+    - qa-e2e-netpol-backend
+
+- name: "Netsec | Wait for qa-e2e netpol projects to be deleted"
+  ansible.builtin.command: oc get project {{ item }}
+  register: command_r
+  until: command_r.rc == 1
+  failed_when: false
+  retries: 10
+  delay: 5
+  loop:
+    - qa-e2e-netpol-frontend
+    - qa-e2e-netpol-backend
+
+- name: "Netsec | Run deny-all/allow NetworkPolicy sequence"
+  block:
+    - name: "Netsec | Create qa-e2e netpol projects"
+      kubernetes.core.k8s:
+        state: present
+        api_version: project.openshift.io/v1
+        kind: Project
+        name: "{{ item }}"
+      loop:
+        - qa-e2e-netpol-frontend
+        - qa-e2e-netpol-backend
+
+    - name: "Netsec | Label frontend namespace for the allow rule's namespaceSelector"
+      kubernetes.core.k8s:
+        state: present
+        api_version: v1
+        kind: Namespace
+        name: qa-e2e-netpol-frontend
+        definition:
+          metadata:
+            labels:
+              app-tier: qa-e2e-frontend
+
+    - name: "Netsec | Deploy frontend and backend apps"
+      kubernetes.core.k8s:
+        state: present
+        definition: "{{ item }}"
+      loop:
+        - apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: frontend
+            namespace: qa-e2e-netpol-frontend
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: frontend
+            template:
+              metadata:
+                labels:
+                  app: frontend
+              spec:
+                containers:
+                  - name: frontend
+                    image: registry.access.redhat.com/ubi9/httpd-24
+                    ports:
+                      - containerPort: 8080
+        - apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: backend
+            namespace: qa-e2e-netpol-backend
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: backend
+            template:
+              metadata:
+                labels:
+                  app: backend
+              spec:
+                containers:
+                  - name: backend
+                    image: registry.access.redhat.com/ubi9/httpd-24
+                    ports:
+                      - containerPort: 8080
+
+    - name: "Netsec | Wait for frontend and backend pods to be Running"
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ item }}"
+        label_selectors:
+          - "app={{ item | regex_replace('^qa-e2e-netpol-', '') }}"
+      register: e2e_netsec_pods
+      until: >-
+        e2e_netsec_pods.resources | default([]) | length > 0 and
+        e2e_netsec_pods.resources[0].status.phase | default('') == 'Running'
+      retries: 24
+      delay: 5
+      loop:
+        - qa-e2e-netpol-frontend
+        - qa-e2e-netpol-backend
+
+    - name: "Netsec | Get backend pod IP"
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: qa-e2e-netpol-backend
+        label_selectors:
+          - app=backend
+      register: e2e_netsec_backend_pod
+
+    - name: "Netsec | Confirm connectivity works before any NetworkPolicy is applied"
+      ansible.builtin.command: >-
+        oc exec -n qa-e2e-netpol-frontend deployment/frontend --
+        curl -s --connect-timeout 5 http://{{ e2e_netsec_backend_pod.resources[0].status.podIP }}:8080
+      register: e2e_netsec_precheck
+      changed_when: false
+      retries: 5
+      delay: 5
+      until: e2e_netsec_precheck.rc == 0
+
+    - name: "Netsec | Apply deny-all NetworkPolicy in backend namespace"
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: networking.k8s.io/v1
+          kind: NetworkPolicy
+          metadata:
+            name: deny-all
+            namespace: qa-e2e-netpol-backend
+          spec:
+            podSelector: {}
+            policyTypes:
+              - Ingress
+            ingress: []
+
+    - name: "Netsec | Confirm connectivity is now blocked"
+      ansible.builtin.command: >-
+        oc exec -n qa-e2e-netpol-frontend deployment/frontend --
+        curl -s --connect-timeout 5 http://{{ e2e_netsec_backend_pod.resources[0].status.podIP }}:8080
+      register: e2e_netsec_blocked
+      changed_when: false
+      failed_when: false
+
+    - name: "Netsec | Fail if deny-all NetworkPolicy did not block traffic"
+      ansible.builtin.fail:
+        msg: "netsec e2e: connectivity still worked after deny-all NetworkPolicy was applied"
+      when: e2e_netsec_blocked.rc == 0
+
+    - name: "Netsec | Apply scoped allow-from-frontend NetworkPolicy"
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: networking.k8s.io/v1
+          kind: NetworkPolicy
+          metadata:
+            name: allow-from-frontend
+            namespace: qa-e2e-netpol-backend
+          spec:
+            podSelector:
+              matchLabels:
+                app: backend
+            policyTypes:
+              - Ingress
+            ingress:
+              - from:
+                  - namespaceSelector:
+                      matchLabels:
+                        app-tier: qa-e2e-frontend
+                ports:
+                  - protocol: TCP
+                    port: 8080
+
+    - name: "Netsec | Confirm connectivity is restored by the scoped allow rule"
+      ansible.builtin.command: >-
+        oc exec -n qa-e2e-netpol-frontend deployment/frontend --
+        curl -s --connect-timeout 5 http://{{ e2e_netsec_backend_pod.resources[0].status.podIP }}:8080
+      register: e2e_netsec_allowed
+      changed_when: false
+      retries: 6
+      delay: 5
+      until: e2e_netsec_allowed.rc == 0
+  always:
+    - name: "Netsec | Delete qa-e2e netpol projects"
+      kubernetes.core.k8s:
+        state: absent
+        api_version: project.openshift.io/v1
+        kind: Project
+        name: "{{ item }}"
+      loop:
+        - qa-e2e-netpol-frontend
+        - qa-e2e-netpol-backend
+
+    - name: "Netsec | Wait for qa-e2e netpol projects to be deleted"
+      ansible.builtin.command: oc get project {{ item }}
+      register: command_r
+      until: command_r.rc == 1
+      failed_when: false
+      retries: 10
+      delay: 5
+      loop:
+        - qa-e2e-netpol-frontend
+        - qa-e2e-netpol-backend
