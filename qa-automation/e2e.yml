@@ -103,10 +103,6 @@
       ansible.builtin.include_tasks: tasks/e2e/acm.yml
       when: module_enable_acm
 
-    - name: "Ztwim | Run Zero Trust Workload Identity Manager module e2e sequence"
-      ansible.builtin.include_tasks: tasks/e2e/ztwim.yml
-      when: module_enable_security or module_enable_ztwim or module_enable_vault
-
     - name: "Vault | Run Vault module e2e sequence"
       ansible.builtin.include_tasks: tasks/e2e/vault.yml
       when: module_enable_security or module_enable_ztwim or module_enable_vault
@@ -144,9 +140,9 @@
       when: module_enable_performance
 
     # -- Report ------------------------------------------------------------
-    # acm.yml and ztwim.yml accumulate into hc_failures (same pattern as
-    # healthcheck.yml) rather than failing fast, so a single e2e run can
-    # report every problem found instead of stopping at the first one.
+    # acm.yml accumulates into hc_failures (same pattern as healthcheck.yml)
+    # rather than failing fast, so a single e2e run can report every problem
+    # found instead of stopping at the first one.
 
     - name: Report healthy
       ansible.builtin.debug:
