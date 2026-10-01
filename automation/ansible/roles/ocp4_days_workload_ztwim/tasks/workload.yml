@@ -16,6 +16,10 @@
     install_operator_channel: "{{ ocp4_days_workload_ztwim_channel }}"
     install_operator_automatic_install_plan_approval: "{{ ocp4_days_workload_ztwim_automatic_install_plan_approval }}"
     install_operator_catalogsource_setup: "{{ ocp4_days_workload_ztwim_use_catalog_snapshot }}"
+    install_operator_catalogsource_name: "{{ ocp4_days_workload_ztwim_catalogsource_name }}"
+    install_operator_catalogsource_namespace: "{{ ocp4_days_workload_ztwim_catalogsource_namespace }}"
+    install_operator_catalogsource_image: "{{ ocp4_days_workload_ztwim_catalog_snapshot_image }}"
+    install_operator_catalogsource_image_tag: "{{ ocp4_days_workload_ztwim_catalog_snapshot_image_tag }}"
     install_operator_csv_nameprefix: zero-trust-workload-identity-manager
     install_operator_install_csv_ignore_error: true
 
