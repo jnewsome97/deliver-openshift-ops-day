@@ -65,6 +65,25 @@
       {{ r_central_tls_secret.resources[0].data['ca.pem'] | b64decode }}
       {{ r_trusted_ca_bundle.resources[0].data['ca-bundle.crt'] | default('') }}
 
+# Known side effect: patching this Route directly (rather than via the
+# Central CR's own spec.central.exposure.route.reencrypt field) means the
+# Central operator's reconciler keeps trying to restore its own default
+# passthrough Route spec, and that patch attempt fails validation (a
+# passthrough Route can't carry our certificate/key/destinationCACertificate
+# fields). The Central CR will permanently show Irreconcilable: True /
+# Progressing: True with a "passthrough termination does not support
+# certificates" message — this is expected noise, not an outage. Central
+# itself stays Available: True and the live Route below is left untouched.
+#
+# The Central operator does support a native reencrypt route
+# (spec.central.exposure.route.reencrypt) that would avoid this fight
+# entirely, but switching to it requires disabling the operator's default
+# route first. Tested live on cluster-4pxwx on 2026-10-01: the operator
+# does not reliably release the old Route's host claim before the new
+# reencrypt Route tries to claim it, leaving Central unreachable
+# (HostAlreadyClaimed) until the old Route is manually deleted. That
+# failure mode is worse than the cosmetic Irreconcilable condition, so
+# this role intentionally keeps patching the Route directly instead.
 - name: Patch Central route to reencrypt with combined CA trust
   kubernetes.core.k8s:
     state: patched
