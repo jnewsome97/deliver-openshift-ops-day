@@ -1608,6 +1608,22 @@
   until: copy_site_result.rc == 0
   when: enable_workshop_cli_tools | default(true) | bool
 
+- name: Add progressive Console storage-access support to Showroom shell
+  shell: |
+    SCRIPT_B64='{{ lookup("file", role_path ~ "/files/console-storage-access.js") | b64encode }}'
+    CONSOLE_ORIGIN='https://console-openshift-console.{{ route_subdomain }}'
+    oc exec deployment/showroom -n {{ showroom_namespace }} -c content -- sh -c "
+      printf '%s' \"$SCRIPT_B64\" | base64 -d | sed \"s|__CONSOLE_ORIGIN__|$CONSOLE_ORIGIN|g\" > /showroom/www/console-storage-access.js
+      if ! grep -q 'console-storage-access.js' /showroom/www/index.html; then
+        sed -i 's|</body>|<script src=\"./console-storage-access.js\"></script></body>|' /showroom/www/index.html
+      fi
+    "
+  register: showroom_storage_access_patch
+  retries: 3
+  delay: 10
+  until: showroom_storage_access_patch.rc == 0
+  when: enable_workshop_cli_tools | default(true) | bool
+
 - name: Resolve DOMAIN variable in ui-config.yml
   shell: |
     oc exec deployment/showroom -n {{ showroom_namespace }} -c content -- sh -c '
