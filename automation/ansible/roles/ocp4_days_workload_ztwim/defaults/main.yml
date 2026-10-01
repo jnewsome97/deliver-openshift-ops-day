@@ -4,3 +4,16 @@ ocp4_days_workload_ztwim_channel: stable-v1
 ocp4_days_workload_ztwim_package: openshift-zero-trust-workload-identity-manager
 ocp4_days_workload_ztwim_automatic_install_plan_approval: true
 ocp4_days_workload_ztwim_use_catalog_snapshot: false
+
+# Catalog Source Name when using a catalog snapshot. This should be unique
+# in the cluster to avoid clashes
+ocp4_days_workload_ztwim_catalogsource_name: "{{ ocp4_days_workload_ztwim_package }}-catalogsource"
+
+# Namespace to install the custom catalog source into
+ocp4_days_workload_ztwim_catalogsource_namespace: "{{ ocp4_days_workload_ztwim_namespace }}"
+
+# Catalog snapshot image
+ocp4_days_workload_ztwim_catalog_snapshot_image: quay.io/gpte-devops-automation/olm_snapshot_redhat_catalog
+
+# Catalog snapshot image tag
+ocp4_days_workload_ztwim_catalog_snapshot_image_tag: "v4.9_2022_07_04"
