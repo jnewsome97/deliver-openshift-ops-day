@@ -1,6 +1,6 @@
 ---
 # ==============================================================================
-# Patch RHACS Central route: passthrough → reencrypt for Showroom iframe
+# Expose RHACS Central via a native reencrypt route, for Showroom iframe
 # ==============================================================================
 # Problem:
 #   RHACS Central sends X-Frame-Options: sameorigin and
@@ -11,9 +11,26 @@
 #   Result: Showroom cannot embed RHACS in an iframe tab.
 #
 # Fix:
-#   Change the Central route from passthrough → reencrypt. This lets HAProxy
-#   terminate TLS on the external side and re-encrypt to the Central pod,
-#   giving it control over response headers.
+#   Use the Central CR's own spec.central.exposure.route.reencrypt field so
+#   the operator creates and owns a reencrypt route itself (named
+#   "central-reencrypt"), instead of patching its default passthrough route
+#   out-of-band. Patching the Route directly works too, but it leaves the
+#   operator permanently fighting to restore its own passthrough default,
+#   which fails validation (a passthrough Route can't carry our
+#   certificate/key/destinationCACertificate fields) and shows up forever as
+#   Irreconcilable: True / Progressing: True on the Central CR. Driving the
+#   switch through the CR's own exposure field avoids that fight entirely.
+#
+# Sequencing:
+#   The operator manages exactly one route.enabled flag that governs both its
+#   default routes ("central" passthrough and "central-mtls" passthrough).
+#   Flipping straight to reencrypt.enabled=true while route.enabled is still
+#   true, or re-enabling reencrypt before the old "central" route's host
+#   claim is actually released, leaves the new "central-reencrypt" route
+#   stuck "HostAlreadyClaimed" — confirmed live on cluster-4pxwx on
+#   2026-10-01. So this disables the default route first and waits for it to
+#   fully disappear before enabling the native reencrypt route with the same
+#   host.
 #
 # CA trust:
 #   For reencrypt, HAProxy must verify Central's backend TLS cert. Central
@@ -23,6 +40,32 @@
 #     1. The StackRox internal CA  — covers the StackRox-signed cert
 #     2. The cluster trusted CA bundle — covers Let's Encrypt / any public CA
 # ==============================================================================
+
+- name: Get Central CR
+  kubernetes.core.k8s_info:
+    api_version: platform.stackrox.io/v1alpha1
+    kind: Central
+    namespace: stackrox
+  register: r_central_cr
+
+- name: Set Central CR name fact
+  ansible.builtin.set_fact:
+    _rhacs_central_cr_name: "{{ r_central_cr.resources[0].metadata.name }}"
+
+- name: Skip if native reencrypt route is already configured
+  when: r_central_cr.resources[0].spec.central.exposure.route.reencrypt.enabled | default(false)
+  ansible.builtin.meta: end_host
+
+- name: Get cluster ingress domain
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: Ingress
+    name: cluster
+  register: r_cluster_ingress
+
+- name: Set Central reencrypt host fact
+  ansible.builtin.set_fact:
+    _rhacs_central_reencrypt_host: "central-stackrox.{{ r_cluster_ingress.resources[0].spec.domain }}"
 
 - name: Get ingress controller default certificate name
   kubernetes.core.k8s_info:
@@ -65,52 +108,67 @@
       {{ r_central_tls_secret.resources[0].data['ca.pem'] | b64decode }}
       {{ r_trusted_ca_bundle.resources[0].data['ca-bundle.crt'] | default('') }}
 
-# Known side effect: patching this Route directly (rather than via the
-# Central CR's own spec.central.exposure.route.reencrypt field) means the
-# Central operator's reconciler keeps trying to restore its own default
-# passthrough Route spec, and that patch attempt fails validation (a
-# passthrough Route can't carry our certificate/key/destinationCACertificate
-# fields). The Central CR will permanently show Irreconcilable: True /
-# Progressing: True with a "passthrough termination does not support
-# certificates" message — this is expected noise, not an outage. Central
-# itself stays Available: True and the live Route below is left untouched.
-#
-# The Central operator does support a native reencrypt route
-# (spec.central.exposure.route.reencrypt) that would avoid this fight
-# entirely, but switching to it requires disabling the operator's default
-# route first. Tested live on cluster-4pxwx on 2026-10-01: the operator
-# does not reliably release the old Route's host claim before the new
-# reencrypt Route tries to claim it, leaving Central unreachable
-# (HostAlreadyClaimed) until the old Route is manually deleted. That
-# failure mode is worse than the cosmetic Irreconcilable condition, so
-# this role intentionally keeps patching the Route directly instead.
-- name: Patch Central route to reencrypt with combined CA trust
+- name: Disable Central operator's default routes
   kubernetes.core.k8s:
     state: patched
-    api_version: route.openshift.io/v1
-    kind: Route
-    name: central
+    api_version: platform.stackrox.io/v1alpha1
+    kind: Central
+    name: "{{ _rhacs_central_cr_name }}"
     namespace: stackrox
     definition:
       spec:
-        tls:
-          termination: reencrypt
-          certificate: "{{ r_ingress_cert_secret.resources[0].data['tls.crt'] | b64decode }}"
-          key: "{{ r_ingress_cert_secret.resources[0].data['tls.key'] | b64decode }}"
-          destinationCACertificate: "{{ _rhacs_combined_destination_ca }}"
-          insecureEdgeTerminationPolicy: Redirect
+        central:
+          exposure:
+            route:
+              enabled: false
 
-- name: Get Central route after patch
+- name: Wait for default routes to be fully removed
   kubernetes.core.k8s_info:
     api_version: route.openshift.io/v1
     kind: Route
-    name: central
+    namespace: stackrox
+  register: r_stackrox_routes
+  retries: 12
+  delay: 5
+  until: r_stackrox_routes.resources | length == 0
+
+- name: Enable native reencrypt route with combined CA trust
+  kubernetes.core.k8s:
+    state: patched
+    api_version: platform.stackrox.io/v1alpha1
+    kind: Central
+    name: "{{ _rhacs_central_cr_name }}"
+    namespace: stackrox
+    definition:
+      spec:
+        central:
+          exposure:
+            route:
+              enabled: false
+              reencrypt:
+                enabled: true
+                host: "{{ _rhacs_central_reencrypt_host }}"
+                tls:
+                  certificate: "{{ r_ingress_cert_secret.resources[0].data['tls.crt'] | b64decode }}"
+                  key: "{{ r_ingress_cert_secret.resources[0].data['tls.key'] | b64decode }}"
+                  destinationCACertificate: "{{ _rhacs_combined_destination_ca }}"
+
+- name: Wait for reencrypt route to be admitted
+  kubernetes.core.k8s_info:
+    api_version: route.openshift.io/v1
+    kind: Route
+    name: central-reencrypt
     namespace: stackrox
   register: r_central_route
+  retries: 12
+  delay: 5
+  until: >-
+    r_central_route.resources | length > 0 and
+    r_central_route.resources[0].spec.host == _rhacs_central_reencrypt_host
 
-- name: Verify Central is reachable after route patch
+- name: Verify Central is reachable after route switch
   ansible.builtin.uri:
-    url: "https://{{ r_central_route.resources[0].spec.host }}/v1/ping"
+    url: "https://{{ _rhacs_central_reencrypt_host }}/v1/ping"
     method: GET
     validate_certs: false
     status_code: [200, 401]
@@ -122,6 +180,6 @@
 - name: Report result
   debug:
     msg: >-
-      Central route patched to reencrypt.
-      Host: {{ r_central_route.resources[0].spec.host }},
+      Central exposed via native reencrypt route.
+      Host: {{ _rhacs_central_reencrypt_host }},
       Termination: {{ r_central_route.resources[0].spec.tls.termination }}
