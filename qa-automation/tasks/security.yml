@@ -63,23 +63,34 @@
       | list | length < 2
     )
 
-# ocp4_workload_rhacs_console_embed patches Central's route from the
-# operator's default passthrough to reencrypt specifically so Showroom can
-# iframe-embed the RHACS console. If it's still passthrough, the embed is
-# broken even though Central itself is healthy.
-- name: "Security | Get RHACS Central route"
+# ocp4_workload_rhacs_console_embed exposes Central via a reencrypt route
+# instead of the operator's default passthrough route, specifically so
+# Showroom can iframe-embed the RHACS console. If no reencrypt route exists,
+# the embed is broken even though Central itself is healthy.
+#
+# The route providing this can be named either "central" (older out-of-band
+# Route-patch approach) or "central-reencrypt" (the operator's own route,
+# created when exposure.route.reencrypt.enabled is set on the Central CR --
+# the current approach, which disables the operator's default "central"
+# route entirely). So this checks all routes in the namespace rather than a
+# single hardcoded name.
+- name: "Security | Get routes in stackrox namespace"
   kubernetes.core.k8s_info:
     api_version: route.openshift.io/v1
     kind: Route
-    name: central
     namespace: stackrox
-  register: hc_security_central_route
+  register: hc_security_stackrox_routes
   ignore_errors: true
 
-- name: "Security | Record failure if Central route is not patched to reencrypt"
+- name: "Security | Record failure if no Central route is reencrypt"
   ansible.builtin.set_fact:
     hc_failures: "{{ hc_failures + ['security: Central route in stackrox is not reencrypt (Showroom iframe embed will be blocked by X-Frame-Options)'] }}"
   when: >-
-    hc_security_central_route is failed or
-    hc_security_central_route.resources | default([]) | length == 0 or
-    hc_security_central_route.resources[0].spec.tls.termination | default('') != 'reencrypt'
+    hc_security_stackrox_routes is failed or
+    (
+      hc_security_stackrox_routes.resources | default([])
+      | selectattr('metadata.name', 'in', ['central', 'central-reencrypt'])
+      | selectattr('spec.tls.termination', 'defined')
+      | selectattr('spec.tls.termination', 'equalto', 'reencrypt')
+      | list | length == 0
+    )
