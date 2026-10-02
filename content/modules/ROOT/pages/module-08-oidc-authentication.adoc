@@ -44,7 +44,7 @@ Deploy a Keycloak instance. We use `dev-file` for the embedded database - in pro
 [source,bash,role="execute"]
 ----
 cat <<EOF | oc apply -f -
-apiVersion: k8s.keycloak.org/v2alpha1
+apiVersion: k8s.keycloak.org/v2beta1
 kind: Keycloak
 metadata:
   name: keycloak
