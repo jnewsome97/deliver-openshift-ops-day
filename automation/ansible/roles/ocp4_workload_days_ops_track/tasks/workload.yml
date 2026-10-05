@@ -478,19 +478,27 @@
 # uses kubernetes.core.k8s state:present (merge patch), which preserves fields
 # not in its template.
 #
-# A single shared CatalogSource in openshift-marketplace is used for every
-# role that needs a snapshot (kubevirt, metallb, web-terminal, gitops, rhdh,
-# ztwim, ols) instead of one dedicated full-index mirror per role. Previously
-# this task pre-created 4 separate CatalogSources (-web-terminal, -kubevirt,
-# -mtv, -lightspeed), all pointing at the exact same image:tag — i.e. 4
-# byte-identical full catalog mirrors. Since OperatorHub/Software Catalog
-# surfaces every CatalogSource's packages cluster-wide regardless of
-# namespace, any package in more than one of those mirrors (e.g.
-# loki-operator, cluster-logging) showed up as a separate, confusingly-named
-# tile per mirror. Consolidating to one shared source eliminates that
-# duplication; cross-namespace references via sourceNamespace already work
-# fine for the gitops/rhdh/ztwim/ols roles, which have used this shared
-# source all along.
+# A single shared CatalogSource named redhat-operators-snapshot in
+# openshift-marketplace is used for every role that needs a snapshot
+# (web-terminal, gitops, rhdh, ztwim, ols) instead of one dedicated
+# full-index mirror per role. Previously this task pre-created 4 separate
+# CatalogSources (-web-terminal, -kubevirt, -mtv, -lightspeed), all pointing
+# at the exact same image:tag — i.e. 4 byte-identical full catalog mirrors.
+# Since OperatorHub/Software Catalog surfaces every CatalogSource's packages
+# cluster-wide regardless of namespace, any package in more than one of
+# those mirrors (e.g. loki-operator, cluster-logging) showed up as a
+# separate, confusingly-named tile per mirror. Consolidating to one shared
+# source eliminates that duplication; cross-namespace references via
+# sourceNamespace already work fine for the gitops/rhdh/ztwim/ols roles,
+# which have used this shared source all along. Originally named
+# redhat-operators-snapshot-lightspeed from when ols/lightspeed was its only
+# consumer; renamed since it now backs several unrelated operators.
+#
+# core_workloads' ocp4_workload_metallb role still creates its own dedicated
+# redhat-operators-snapshot-mtv mirror in metallb-system and hardcodes that
+# namespace/name internally, so it can't be pointed at this shared source
+# without a change in that collection. ocp4_workload_cluster_cleanup_final
+# deletes it once metallb's CSV has succeeded instead.
 # ==============================================================================
 
 - name: Pre-create shared snapshot CatalogSource with extractContent
@@ -500,7 +508,7 @@
       apiVersion: operators.coreos.com/v1alpha1
       kind: CatalogSource
       metadata:
-        name: redhat-operators-snapshot-lightspeed
+        name: redhat-operators-snapshot
         namespace: openshift-marketplace
       spec:
         sourceType: grpc
@@ -518,7 +526,7 @@
 
 - name: Wait for shared snapshot CatalogSource to reach READY state
   shell: |
-    oc get catalogsource redhat-operators-snapshot-lightspeed -n openshift-marketplace \
+    oc get catalogsource redhat-operators-snapshot -n openshift-marketplace \
       -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null
   register: r_catalog_state
   until: r_catalog_state.stdout == "READY"

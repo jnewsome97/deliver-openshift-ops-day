@@ -85,6 +85,32 @@
       or module_enable_ztwim | default(false) | bool
       or module_enable_vault | default(false) | bool
 
+# core_workloads' ocp4_workload_metallb role hardcodes its own dedicated
+# redhat-operators-snapshot-mtv CatalogSource (metallb-system namespace)
+# instead of using the shared redhat-operators-snapshot source every other
+# snapshot-dependent role here uses — that's internal to the core_workloads
+# collection, not something this repo can change. It's a full mirror of the
+# entire redhat-operators index, so every package in it (Loki Operator, Red
+# Hat OpenShift Logging, etc.) shows up as an extra duplicate tile in the
+# Software Catalog alongside the live redhat-operators entry. By this point
+# metallb-operator's Subscription has already resolved and its CSV has
+# succeeded, so the CatalogSource has done its job; deleting it removes the
+# duplicate tiles without affecting the already-installed operator (only a
+# future *upgrade* resolved against that source would be affected, which
+# doesn't matter on these short-lived clusters). Same pattern already used
+# in ocp4_workload_cluster_cleanup for the unused default catalogs.
+- name: "Cluster cleanup final | Delete metallb's dedicated snapshot CatalogSource now that its subscription has resolved"
+  kubernetes.core.k8s:
+    state: absent
+    api_version: operators.coreos.com/v1alpha1
+    kind: CatalogSource
+    name: redhat-operators-snapshot-mtv
+    namespace: metallb-system
+  when:
+    - ACTION == "provision"
+    - module_enable_acm | default(true) | bool
+  ignore_errors: true
+
 - name: Skip cleanup on destroy
   when: ACTION == "destroy"
   debug:

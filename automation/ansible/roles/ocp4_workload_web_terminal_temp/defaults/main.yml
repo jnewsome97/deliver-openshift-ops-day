@@ -36,7 +36,7 @@ ocp4_workload_web_terminal_use_catalog_snapshot: false
 # snapshot CatalogSource used by every role that needs one, rather than a
 # dedicated per-role mirror - see ocp4_workload_days_ops_track's
 # "Pre-create shared snapshot CatalogSource" task.
-ocp4_workload_web_terminal_catalogsource_name: redhat-operators-snapshot-lightspeed
+ocp4_workload_web_terminal_catalogsource_name: redhat-operators-snapshot
 
 # Namespace of the catalog snapshot CatalogSource
 ocp4_workload_web_terminal_catalogsource_namespace: openshift-marketplace
