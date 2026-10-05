@@ -53,9 +53,14 @@ ocp4_workload_openshift_virtualization_install_virtctl: true
 # Use a catalog snapshot
 ocp4_workload_openshift_virtualization_use_catalog_snapshot: false
 
-# Catalog Source Name when using a catalog snapshot. This should be unique
-# in the cluster to avoid clashes
-ocp4_workload_openshift_virtualization_catalogsource_name: redhat-operators-snapshot-kubevirt
+# Catalog Source Name when using a catalog snapshot. Defaults to the shared
+# snapshot CatalogSource used by every role that needs one, rather than a
+# dedicated per-role mirror - see ocp4_workload_days_ops_track's
+# "Pre-create shared snapshot CatalogSource" task.
+ocp4_workload_openshift_virtualization_catalogsource_name: redhat-operators-snapshot-lightspeed
+
+# Namespace of the catalog snapshot CatalogSource
+ocp4_workload_openshift_virtualization_catalogsource_namespace: openshift-marketplace
 
 # Catalog snapshot image
 ocp4_workload_openshift_virtualization_catalog_snapshot_image: quay.io/gpte-devops-automation/olm_snapshot_redhat_catalog

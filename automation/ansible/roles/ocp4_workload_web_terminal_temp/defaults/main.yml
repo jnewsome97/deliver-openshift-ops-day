@@ -32,9 +32,14 @@ ocp4_workload_web_terminal_starting_csv: ""
 # Use a catalog snapshot
 ocp4_workload_web_terminal_use_catalog_snapshot: false
 
-# Catalog Source Name when using a catalog snapshot. This should be unique
-# in the cluster to avoid clashes
-ocp4_workload_web_terminal_catalogsource_name: redhat-operators-snapshot-web-terminal
+# Catalog Source Name when using a catalog snapshot. Defaults to the shared
+# snapshot CatalogSource used by every role that needs one, rather than a
+# dedicated per-role mirror - see ocp4_workload_days_ops_track's
+# "Pre-create shared snapshot CatalogSource" task.
+ocp4_workload_web_terminal_catalogsource_name: redhat-operators-snapshot-lightspeed
+
+# Namespace of the catalog snapshot CatalogSource
+ocp4_workload_web_terminal_catalogsource_namespace: openshift-marketplace
 
 # Catalog snapshot image
 ocp4_workload_web_terminal_catalog_snapshot_image: quay.io/gpte-devops-automation/olm_snapshot_redhat_catalog

@@ -468,7 +468,7 @@
   when: oc_whoami_check.rc == 0
 
 # ==============================================================================
-# PRE-CREATE SNAPSHOT CATALOGSOURCES WITH extractContent
+# PRE-CREATE SNAPSHOT CATALOGSOURCE WITH extractContent
 # The install_operator role creates CatalogSources from a template that doesn't
 # include grpcPodConfig. Without extractContent, the catalog pod runs the full
 # 1.7GB index image monolithically — parsing takes ~100s and regularly exceeds
@@ -477,36 +477,35 @@
 # opm server starts in ~10s. Pre-creating here is safe because install_operator
 # uses kubernetes.core.k8s state:present (merge patch), which preserves fields
 # not in its template.
+#
+# A single shared CatalogSource in openshift-marketplace is used for every
+# role that needs a snapshot (kubevirt, metallb, web-terminal, gitops, rhdh,
+# ztwim, ols) instead of one dedicated full-index mirror per role. Previously
+# this task pre-created 4 separate CatalogSources (-web-terminal, -kubevirt,
+# -mtv, -lightspeed), all pointing at the exact same image:tag — i.e. 4
+# byte-identical full catalog mirrors. Since OperatorHub/Software Catalog
+# surfaces every CatalogSource's packages cluster-wide regardless of
+# namespace, any package in more than one of those mirrors (e.g.
+# loki-operator, cluster-logging) showed up as a separate, confusingly-named
+# tile per mirror. Consolidating to one shared source eliminates that
+# duplication; cross-namespace references via sourceNamespace already work
+# fine for the gitops/rhdh/ztwim/ols roles, which have used this shared
+# source all along.
 # ==============================================================================
 
-- name: Ensure namespaces exist for snapshot CatalogSources
-  kubernetes.core.k8s:
-    state: present
-    definition:
-      apiVersion: v1
-      kind: Namespace
-      metadata:
-        name: "{{ item }}"
-  loop:
-    - openshift-cnv
-    - metallb-system
-  loop_control:
-    label: "{{ item }}"
-  ignore_errors: true
-
-- name: Pre-create snapshot CatalogSources with extractContent
+- name: Pre-create shared snapshot CatalogSource with extractContent
   kubernetes.core.k8s:
     state: present
     definition:
       apiVersion: operators.coreos.com/v1alpha1
       kind: CatalogSource
       metadata:
-        name: "{{ item.name }}"
-        namespace: "{{ item.namespace }}"
+        name: redhat-operators-snapshot-lightspeed
+        namespace: openshift-marketplace
       spec:
         sourceType: grpc
         image: "{{ ocp4_workload_catalogsource_image }}:{{ ocp4_workload_catalogsource_tag }}"
-        displayName: "{{ item.name }}"
+        displayName: "Red Hat Operators (Snapshot)"
         publisher: Red Hat AgnosticD
         priority: -500
         grpcPodConfig:
@@ -515,38 +514,16 @@
             catalogDir: /configs
           memoryTarget: "30Mi"
           securityContextConfig: restricted
-  loop:
-    - name: redhat-operators-snapshot-web-terminal
-      namespace: openshift-operators
-    - name: redhat-operators-snapshot-kubevirt
-      namespace: openshift-cnv
-    - name: redhat-operators-snapshot-mtv
-      namespace: metallb-system
-    - name: redhat-operators-snapshot-lightspeed
-      namespace: openshift-marketplace
-  loop_control:
-    label: "{{ item.name }}"
   ignore_errors: true
 
-- name: Wait for snapshot CatalogSources to reach READY state
+- name: Wait for shared snapshot CatalogSource to reach READY state
   shell: |
-    oc get catalogsource {{ item.name }} -n {{ item.namespace }} \
+    oc get catalogsource redhat-operators-snapshot-lightspeed -n openshift-marketplace \
       -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null
   register: r_catalog_state
   until: r_catalog_state.stdout == "READY"
   retries: 30
   delay: 10
-  loop:
-    - name: redhat-operators-snapshot-web-terminal
-      namespace: openshift-operators
-    - name: redhat-operators-snapshot-kubevirt
-      namespace: openshift-cnv
-    - name: redhat-operators-snapshot-mtv
-      namespace: metallb-system
-    - name: redhat-operators-snapshot-lightspeed
-      namespace: openshift-marketplace
-  loop_control:
-    label: "{{ item.name }}"
   ignore_errors: true
 
 - name: DEBUG - All CatalogSources
