@@ -1,7 +1,7 @@
 ---
 site:
   title: OpenShift Ops Day Roadshow
-  url: https://github.com/rhpds/openshift-days-ops-showroom
+  url: https://github.com/rhpds/deliver-openshift-ops-day
   start_page: openshift-days-ops-track::index.adoc
 
 content:
