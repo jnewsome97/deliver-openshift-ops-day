@@ -31,6 +31,21 @@
 # ==============================================================================
 - name: Run workload with failure capture
   block:
+    - name: Wait for shared redhat-operators-snapshot CatalogSource to be READY
+      kubernetes.core.k8s_info:
+        api_version: operators.coreos.com/v1alpha1
+        kind: CatalogSource
+        name: "{{ ocp4_workload_metallb_catalogsource_name }}"
+        namespace: "{{ ocp4_workload_metallb_catalogsource_namespace }}"
+      register: r_catalogsource
+      until:
+        - r_catalogsource.resources | length > 0
+        - r_catalogsource.resources[0].status.connectionState.lastObservedState is defined
+        - r_catalogsource.resources[0].status.connectionState.lastObservedState == "READY"
+      retries: 30
+      delay: 10
+      when: ocp4_workload_metallb_use_catalog_snapshot | default(false) | bool
+
     - name: Install MetalLB Operator
       ansible.builtin.include_role:
         name: install_operator
