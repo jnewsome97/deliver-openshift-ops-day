@@ -186,8 +186,16 @@
           retries: 20
           delay: 10
 
+        - name: Check current bastion user id
+          ansible.builtin.command: id -u
+          register: r_bastion_uid
+          changed_when: false
+
         - name: Install virtctl CLI on bastion
-          become: true
+          # Only become when not already root - some bastion images run
+          # the automation as root and don't have a sudo binary installed,
+          # which makes an unconditional become: true fail outright.
+          become: "{{ r_bastion_uid.stdout != '0' }}"
           ansible.builtin.unarchive:
             src: /tmp/virtctl.tar.gz
             remote_src: true
