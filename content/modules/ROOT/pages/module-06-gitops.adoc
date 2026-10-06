@@ -127,7 +127,7 @@ spec:
     server: 'https://kubernetes.default.svc'
   source:
     path: support/gitops/cluster-config/
-    repoURL: 'https://github.com/rhpds/openshift-days-ops-showroom/'
+    repoURL: 'https://github.com/rhpds/deliver-openshift-ops-day/'
     targetRevision: main
   project: workshop
 EOF

@@ -110,7 +110,7 @@ commands:
       commandLine: |
         if [ ! -f /home/user/.local/bin/claude ]; then
           mkdir -p /home/user/.local/bin
-          curl -fsSL https://github.com/anthropics/claude-code/releases/download/v2.1.207/claude-linux-x64.tar.gz -o /tmp/claude.tar.gz
+          curl -fsSL https://github.com/anthropics/claude-code/releases/download/v2.1.220/claude-linux-x64.tar.gz -o /tmp/claude.tar.gz
           tar -xzf /tmp/claude.tar.gz -C /home/user/.local/bin claude
           chmod +x /home/user/.local/bin/claude
           rm /tmp/claude.tar.gz
