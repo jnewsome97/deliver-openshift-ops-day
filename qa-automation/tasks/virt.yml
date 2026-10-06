@@ -1,7 +1,7 @@
 ---
 # Virtualization module (module_enable_virt).
 # Confirms HyperConverged reached the same "ReconcileCompleted"/Available
-# condition that ocp4_workload_openshift_virtualization_temp waits on during
+# condition that ocp4_workload_openshift_virtualization waits on during
 # provisioning (see automation/ansible/roles/.../tasks/workload.yml).
 
 - name: "Virt | Get HyperConverged instance"

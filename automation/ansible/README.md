@@ -37,14 +37,17 @@ Deployed via agnosticv catalog item `agd_v2/openshift-days-ops-track-cnv`. The w
 ### OpenShift Lightspeed
 - `ocp4_workload_ols_cleanup` - Deletes the OLSConfig created by the upstream OLS role so students create it manually in the lab module. The upstream role defaults `ocp4_workload_ai_platform: azure` which we can't override. Operator and Azure credentials secret remain intact
 
+### Local Overrides (CatalogSource namespace fixes)
+Local copies of upstream `core_workloads` roles whose hardcoded `install_operator_catalogsource_namespace` causes OLM to create a duplicate, fragile per-role CatalogSource mirror instead of reusing the shared `redhat-operators-snapshot`. Each makes the namespace configurable via a role variable instead.
+- `ocp4_workload_metallb`
+- `ocp4_workload_openshift_gitops`
+- `ocp4_workload_openshift_virtualization`
+- `ocp4_workload_web_terminal`
+
 ### Temporary Copies (from upstream core_workloads)
 Unmodified copies of upstream roles, used when upstream had issues. Should be removed once no longer required.
-- `ocp4_workload_metallb_temp`
-- `ocp4_workload_openshift_gitops_temp`
-- `ocp4_workload_openshift_virtualization_temp`
 - `ocp4_workload_pipelines_temp`
 - `ocp4_workload_rhacm_temp`
-- `ocp4_workload_web_terminal_temp`
 
 ## Usage
 
