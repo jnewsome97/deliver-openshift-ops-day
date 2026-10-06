@@ -1,0 +1,3 @@
+= ocp4_workload_openshift_gitops - Install Red Hat OpenShift GitOps (ArgoCD)
+
+See defaults/main.yml for variables to set.

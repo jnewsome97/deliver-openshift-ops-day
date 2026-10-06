@@ -1,0 +1,38 @@
+---
+- name: Remove OpenShift GitOps operator
+  ansible.builtin.include_role:
+    name: install_operator
+  vars:
+    install_operator_action: remove
+    install_operator_name: openshift-gitops-operator
+    install_operator_namespace: openshift-gitops-operator
+    install_operator_channel: "{{ ocp4_workload_openshift_gitops_channel }}"
+    install_operator_catalog: redhat-operators
+    install_operator_catalogsource_setup: "{{ ocp4_workload_openshift_gitops_use_catalog_snapshot | default(false) }}"
+    install_operator_catalogsource_name: "{{ ocp4_workload_openshift_gitops_catalogsource_name | default('') }}"
+    install_operator_catalogsource_namespace: openshift-operators
+    install_operator_catalogsource_image: "{{ ocp4_workload_openshift_gitops_catalog_snapshot_image | default('') }}"
+    install_operator_catalogsource_image_tag: "{{ ocp4_workload_openshift_gitops_catalog_snapshot_image_tag | default('') }}"
+
+- name: Remove cluster-admin permissions from Gitops Service account
+  when: ocp4_workload_openshift_gitops_setup_cluster_admin | bool
+  kubernetes.core.k8s:
+    state: absent
+    src: clusterrolebinding.yaml
+
+- name: Remove per-user AppProjects
+  when: ocp4_workload_openshift_gitops_per_user_access | bool
+  kubernetes.core.k8s:
+    state: absent
+    api_version: argoproj.io/v1alpha1
+    kind: AppProject
+    namespace: openshift-gitops
+    label_selectors:
+      - app.kubernetes.io/managed-by=agnosticd
+
+- name: Remove openshift-gitops namespace
+  kubernetes.core.k8s:
+    state: absent
+    api_version: v1
+    kind: namespace
+    name: openshift-gitops

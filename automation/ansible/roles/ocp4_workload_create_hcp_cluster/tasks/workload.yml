@@ -238,19 +238,12 @@
 # from that source on the managed cluster.
 #
 # The HostedCluster is paused so HyperShift does not reconcile catalog-operator
-# back to its desired replica count after we scale it down.
+# back to its desired replica count after we scale it down. pausedUntil is
+# permanent (not a timestamp) with no unpause step later in this role, so we
+# must confirm catalog-operator actually exists before pausing — pausing
+# first risked HyperShift never creating it at all, permanently breaking OLM
+# in the hosted cluster (seen in job_264241/cluster-z7px4).
 # ==============================================================================
-
-- name: Pause HostedCluster to prevent HyperShift from reconciling OLM catalog-operator
-  kubernetes.core.k8s:
-    state: patched
-    api_version: hypershift.openshift.io/v1beta1
-    kind: HostedCluster
-    name: "{{ ocp4_workload_create_hcp_cluster_name }}"
-    namespace: "{{ ocp4_workload_create_hcp_cluster_namespace }}"
-    definition:
-      spec:
-        pausedUntil: "true"
 
 - name: Wait for catalog-operator Deployment to appear in HCP control plane namespace
   kubernetes.core.k8s_info:
@@ -263,6 +256,18 @@
   delay: 10
   until: r_hcp_catalog_operator.resources | length > 0
   ignore_errors: true
+
+- name: Pause HostedCluster to prevent HyperShift from reconciling OLM catalog-operator
+  kubernetes.core.k8s:
+    state: patched
+    api_version: hypershift.openshift.io/v1beta1
+    kind: HostedCluster
+    name: "{{ ocp4_workload_create_hcp_cluster_name }}"
+    namespace: "{{ ocp4_workload_create_hcp_cluster_namespace }}"
+    definition:
+      spec:
+        pausedUntil: "true"
+  when: r_hcp_catalog_operator.resources | length > 0
 
 - name: Scale down HCP catalog-operator so it stops managing catalog Deployments
   kubernetes.core.k8s:
