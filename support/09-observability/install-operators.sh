@@ -1,10 +1,70 @@
 #!/bin/bash
 set -euo pipefail
 
+csv_succeeded() {
+  local prefix=$1 ns=$2
+  oc get csv -n "$ns" --no-headers 2>/dev/null | grep "^${prefix}" | grep -q "Succeeded"
+}
+
+snapshot_channel() {
+  local name=$1
+  oc get packagemanifest "$name" -n openshift-marketplace \
+    -o jsonpath='{.status.defaultChannel}' 2>/dev/null
+}
+
+ensure_snapshot_sub() {
+  local pkg=$1 ns=$2 subname=${3:-$1}
+  if csv_succeeded "$pkg" "$ns"; then
+    echo "$pkg already installed in $ns, skipping"
+    return
+  fi
+  local channel
+  channel=$(snapshot_channel "$pkg")
+  if [ -z "$channel" ]; then
+    echo "ERROR: $pkg not found in redhat-operators-snapshot catalog" >&2
+    return 1
+  fi
+  echo "Installing $pkg from snapshot channel $channel..."
+  oc apply -f - <<SUBEOF
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: ${subname}
+  namespace: ${ns}
+spec:
+  channel: ${channel}
+  installPlanApproval: Automatic
+  name: ${pkg}
+  source: redhat-operators-snapshot
+  sourceNamespace: openshift-marketplace
+SUBEOF
+}
+
+ensure_live_sub() {
+  local pkg=$1 ns=$2 subname=${3:-$1} channel=${4:-stable}
+  if csv_succeeded "$pkg" "$ns"; then
+    echo "$pkg already installed in $ns, skipping"
+    return
+  fi
+  echo "Installing $pkg from redhat-operators channel $channel..."
+  oc apply -f - <<SUBEOF
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: ${subname}
+  namespace: ${ns}
+spec:
+  channel: ${channel}
+  installPlanApproval: Automatic
+  name: ${pkg}
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+SUBEOF
+}
+
 oc create namespace openshift-logging 2>/dev/null || true
 oc create namespace openshift-operators-redhat 2>/dev/null || true
 
-# Create OperatorGroups only if they don't already exist (manual install may have created them)
 if ! oc get operatorgroup -n openshift-logging --no-headers 2>/dev/null | grep -q .; then
   oc apply -f - <<OGEOF
 apiVersion: operators.coreos.com/v1
@@ -29,87 +89,21 @@ spec: {}
 OGEOF
 fi
 
-# Install Loki operator if not already installed (manual console install may have done this)
-if ! oc get sub loki-operator -n openshift-operators-redhat 2>/dev/null | grep -q loki; then
-  oc apply -f - <<LOKIEOF
-apiVersion: operators.coreos.com/v1alpha1
-kind: Subscription
-metadata:
-  name: loki-operator
-  namespace: openshift-operators-redhat
-spec:
-  # loki-operator is not in the live redhat-operators index; only
-  # available in the pinned snapshot catalog, which tops out at stable-6.4.
-  channel: stable-6.4
-  installPlanApproval: Automatic
-  name: loki-operator
-  source: redhat-operators-snapshot
-  sourceNamespace: openshift-marketplace
-LOKIEOF
-fi
-
-cat <<EOF | oc apply -f -
-apiVersion: operators.coreos.com/v1alpha1
-kind: Subscription
-metadata:
-  name: cluster-logging
-  namespace: openshift-logging
-spec:
-  # cluster-logging is not in the live redhat-operators index; only
-  # available in the pinned snapshot catalog, which tops out at stable-6.4.
-  channel: stable-6.4
-  installPlanApproval: Automatic
-  name: cluster-logging
-  source: redhat-operators-snapshot
-  sourceNamespace: openshift-marketplace
----
-apiVersion: operators.coreos.com/v1alpha1
-kind: Subscription
-metadata:
-  name: cluster-observability-operator
-  namespace: openshift-operators
-spec:
-  channel: stable
-  installPlanApproval: Automatic
-  name: cluster-observability-operator
-  source: redhat-operators
-  sourceNamespace: openshift-marketplace
----
-apiVersion: operators.coreos.com/v1alpha1
-kind: Subscription
-metadata:
-  name: tempo-product
-  namespace: openshift-operators
-spec:
-  channel: stable
-  installPlanApproval: Automatic
-  name: tempo-product
-  source: redhat-operators
-  sourceNamespace: openshift-marketplace
----
-apiVersion: operators.coreos.com/v1alpha1
-kind: Subscription
-metadata:
-  name: opentelemetry-product
-  namespace: openshift-operators
-spec:
-  channel: stable
-  installPlanApproval: Automatic
-  name: opentelemetry-product
-  source: redhat-operators
-  sourceNamespace: openshift-marketplace
-EOF
-echo "Logging, COO, Tempo, and OpenTelemetry subscriptions created"
+ensure_snapshot_sub loki-operator      openshift-operators-redhat loki-operator
+ensure_snapshot_sub cluster-logging    openshift-logging          cluster-logging
+ensure_live_sub     cluster-observability-operator openshift-operators cluster-observability-operator stable
+ensure_live_sub     tempo-product      openshift-operators        tempo-product      stable
+ensure_live_sub     opentelemetry-product openshift-operators     opentelemetry-product stable
 
 echo "Waiting for all 5 operators (this may take a few minutes)..."
 TIMEOUT=600; ELAPSED=0
 while [ $ELAPSED -lt $TIMEOUT ]; do
   READY=0
-  oc get csv -n openshift-operators-redhat --no-headers 2>/dev/null | grep "^loki-operator" | grep -q "Succeeded" && READY=$((READY+1))
-  oc get csv -n openshift-logging --no-headers 2>/dev/null | grep "^cluster-logging" | grep -q "Succeeded" && READY=$((READY+1))
-  oc get csv -n openshift-operators --no-headers 2>/dev/null | grep "^cluster-observability" | grep -q "Succeeded" && READY=$((READY+1))
-  oc get csv -n openshift-operators --no-headers 2>/dev/null | grep "^tempo-operator" | grep -q "Succeeded" && READY=$((READY+1))
-  oc get csv -n openshift-operators --no-headers 2>/dev/null | grep "^opentelemetry-operator" | grep -q "Succeeded" && READY=$((READY+1))
+  csv_succeeded loki-operator                  openshift-operators-redhat && READY=$((READY+1))
+  csv_succeeded cluster-logging                openshift-logging          && READY=$((READY+1))
+  csv_succeeded cluster-observability-operator openshift-operators        && READY=$((READY+1))
+  csv_succeeded tempo-operator                 openshift-operators        && READY=$((READY+1))
+  csv_succeeded opentelemetry-operator         openshift-operators        && READY=$((READY+1))
   echo "  ${READY}/5 operators ready"
   [ $READY -eq 5 ] && break
   sleep 15; ELAPSED=$((ELAPSED+15))
