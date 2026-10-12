@@ -23,13 +23,15 @@ EOF
 # Delete client secret and OIDC users/groups
 oc delete secret rhbk-client-secret -n openshift-config --ignore-not-found
 oc delete user developer1 admin1 viewer1 --ignore-not-found
+oc delete identity keycloak:developer1 keycloak:admin1 keycloak:viewer1 --ignore-not-found
 oc delete group ocp-admins ocp-developers ocp-viewers --ignore-not-found
 
-# Delete RHBK namespace, projects, and wait for OAuth rollout in the background
+# Delete projects; wait for OAuth rollout before removing RHBK so OAuth pods do not
+# attempt OIDC token validation against a namespace that no longer exists.
 (
-  oc delete namespace rhbk --ignore-not-found
   oc delete project app-development app-production --ignore-not-found
   oc rollout status deployment/oauth-openshift -n openshift-authentication --timeout=120s
+  oc delete namespace rhbk --ignore-not-found
 ) &>/dev/null &
 
 echo "Cleanup running in background — you can continue to the next module"
