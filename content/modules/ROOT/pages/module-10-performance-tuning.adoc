@@ -287,6 +287,11 @@ This is how you'd answer the question in a capacity review: "Do we need more nod
 
 == Cleanup & Takeaways
 
+[WARNING]
+====
+*Before moving on:* Please run the cleanup commands in this module. This cluster has limited resources - leaving workloads running can cause resource pressure that may affect your experience in later modules.
+====
+
 [source,bash,role="execute"]
 ----
 oc delete project performance-demo
@@ -312,9 +317,3 @@ oc delete project performance-demo
 |===
 
 **The pattern:** Don't guess resources → Use VPA to measure → Apply recommendations → Use HPA for load variation
-
-
-[WARNING]
-====
-*Before moving on:* Please run the cleanup commands in this module. This cluster has limited resources - leaving workloads running can cause resource pressure that may affect your experience in later modules.
-====

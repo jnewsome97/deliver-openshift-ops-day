@@ -63,13 +63,6 @@ Six microservices have been deployed with intentional misconfigurations. Let's t
 Switch to the **OCP Console** tab and navigate to **Workloads -> Pods** (select project `debug-lab` from the dropdown). You'll immediately see which pods have issues - error states like `CrashLoopBackOff` and `ImagePullBackOff` are flagged with a red exclamation mark:
 
 image::broken-pods-triage.png[Pod list showing multiple failure states - ImagePullBackOff CrashLoopBackOff and CreateContainerConfigError, link=self, window=blank]
-* `weather-frontend` - `ImagePullBackOff` (red indicator)
-* `weather-api` - `CrashLoopBackOff` (red indicator)
-* `weather-backend` - `CreateContainerConfigError`
-* `weather-proxy` - `Running` (but has a hidden issue)
-* `weather-cache` - doesn't appear at all
-
-This is how real incident triage works - visual scanning of pod status to quickly identify what needs attention.
 
 You can also verify via CLI:
 
@@ -78,7 +71,25 @@ You can also verify via CLI:
 oc get pods -n debug-lab
 ----
 
-NOTE: You might notice `weather-cache` is missing from the pod list - that's one of the problems to investigate. Also, `weather-proxy` shows Running but has its own issue.
+----
+NAME                    READY   STATUS                       RESTARTS   AGE
+weather-api-xxxxx       0/1     CrashLoopBackOff             3          2m
+weather-backend-xxxxx   0/1     CreateContainerConfigError   0          2m
+weather-db-xxxxx        0/1     CrashLoopBackOff             3          2m
+weather-frontend-xxxxx  0/1     ImagePullBackOff             0          2m
+weather-proxy-xxxxx     1/1     Running                      0          2m
+----
+
+* `weather-frontend` - `ImagePullBackOff`
+* `weather-api` - `CrashLoopBackOff`
+* `weather-backend` - `CreateContainerConfigError`
+* `weather-db` - `CrashLoopBackOff`
+* `weather-proxy` - `Running` (but has a hidden issue)
+* `weather-cache` - missing entirely
+
+NOTE: `weather-cache` is missing from the pod list because it was never created. `weather-proxy` shows Running but has its own issue we'll find later.
+
+**Your mission:** Fix all six.
 
 **Your mission:** Fix all six.
 
@@ -88,21 +99,21 @@ NOTE: You might notice `weather-cache` is missing from the pod list - that's one
 
 **Diagnose**
 
-In the **OCP Console**, navigate to **Workloads -> Pods** (project: `debug-lab`) and click on the `weather-frontend` pod. Click the **Events** tab at the top to see the error with color-coded severity - you'll see the image pull failure immediately.
-
-image::debugging-frontend-events.png[weather-frontend pod Events tab showing ImagePullBackOff error, link=self, window=blank]
-You can also check via CLI:
+Check the pod events to see the image pull failure:
 
 [source,bash,role="execute"]
 ----
 oc describe pod -l app=weather-frontend -n debug-lab | tail -10
 ----
 
-Look at the **Events** section. You should see errors like:
-
 ----
-Warning  Failed   Failed to pull image "quay.io/openshift-workshop-applications/weather-debug-app:9.9": ... manifest unknown
-Warning  Failed   Error: ImagePullBackOff
+Events:
+  Type     Reason    Age                From     Message
+  ----     ------    ----               ----     -------
+  Warning  Failed    30s (x4 over 2m)   kubelet  Error: ImagePullBackOff
+  Normal   Pulling   15s (x4 over 2m)   kubelet  Pulling image "quay.io/openshift-workshop-applications/weather-debug-app:9.9"
+  Warning  Failed    14s (x4 over 2m)   kubelet  Failed to pull image "quay.io/openshift-workshop-applications/weather-debug-app:9.9": reading manifest 9.9 in quay.io/openshift-workshop-applications/weather-debug-app: manifest unknown
+  Warning  Failed    14s (x4 over 2m)   kubelet  Error: ErrImagePull
 ----
 
 The image tag `9.9` doesn't exist - the registry can't find it. Let's confirm the image reference:
@@ -136,9 +147,10 @@ You should see `1/1 Running`.
 
 **Diagnose**
 
-The pod keeps starting and crashing. In the **OCP Console**, navigate to **Workloads -> Pods** (project: `debug-lab`) and click the `weather-api` pod, then the **Logs** tab. The log viewer shows the error message with real-time streaming. If the pod has restarted, use the container dropdown on the left (highlighted in red below) to select the previous container's logs.
+The pod keeps starting and crashing. In the **OCP Console**, navigate to **Workloads -> Pods** (project: `debug-lab`) and click the `weather-api` pod, then the **Logs** tab. The log viewer shows the error message with real-time streaming. If the pod has restarted, use the container dropdown on the left to select the previous container's logs.
 
 image::debugging-api-logs.png[weather-api pod Logs tab showing missing config file error, link=self, window=blank]
+
 You can also check via CLI:
 
 [source,bash,role="execute"]
@@ -146,10 +158,15 @@ You can also check via CLI:
 oc logs deployment/weather-api -n debug-lab
 ----
 
-You should see:
-
 ----
 Error: Missing required config file /etc/weather/config.yaml
+----
+
+If the pod has already restarted, use `--previous` to read the last run's output:
+
+[source,bash,role="execute"]
+----
+oc logs -l app=weather-api -n debug-lab --previous 2>/dev/null || true
 ----
 
 The app is trying to read a config file that doesn't exist.
@@ -187,20 +204,14 @@ You should see `1/1 Running`.
 
 **Diagnose**
 
-You may have noticed `weather-cache` doesn't appear in the pod list at all. In the **OCP Console**, navigate to **Workloads → Deployments** (project: `debug-lab`). You'll see `weather-cache` showing `0 of 1 pods` - the deployment exists but no pod was created:
-
-image::debugging-deployments.png[Deployments view showing weather-cache with 0 of 1 pods, link=self, window=blank]
-Click `weather-cache`, then the **ReplicaSets** tab, then click the ReplicaSet name (`weather-cache-xxxxxxx`). The **Events** tab shows the `FailedCreate` errors explaining why no pod was created.
-
-image::debugging-cache-deployment-events.png[weather-cache ReplicaSet Events showing FailedCreate due to LimitRange violation, link=self, window=blank]
-Let's also check via CLI:
+You may have noticed `weather-cache` doesn't appear in the pod list at all. The deployment exists but no pod was ever created:
 
 [source,bash,role="execute"]
 ----
 oc get deployment weather-cache -n debug-lab
 ----
 
-It shows `0/1` ready - the pod was never created. When a pod can't even be created, check the **ReplicaSet** events:
+It shows `0/1` ready. When a pod can't even be created, the error is on the ReplicaSet, not the pod. Check the ReplicaSet events:
 
 [source,bash,role="execute"]
 ----
@@ -426,9 +437,10 @@ You should see `[db] Starting on port 8080` - the database initialized successfu
 
 === All Fixed
 
-Switch to the **OCP Console** tab - **Workloads -> Pods** (project: `debug-lab`). All six pods should now show green `Running` status. Compare this to the red/orange/yellow view you saw at the start - that visual progression is the troubleshooting workflow in action.
+Switch to the **OCP Console** tab - **Workloads -> Pods** (project: `debug-lab`). All six pods should now show green `Running` status.
 
 image::debugging-all-fixed.png[All six weather pods showing green Running status, link=self, window=blank]
+
 Verify via CLI:
 
 [source,bash,role="execute"]
@@ -524,14 +536,13 @@ The pattern is always the same: **check status → describe pod/replicaset → r
 
 === Cleanup
 
+[WARNING]
+====
+*Before moving on:* Please run the cleanup commands in this module. This cluster has limited resources - leaving workloads running can cause resource pressure that may affect your experience in later modules.
+====
+
 [source,bash,role="execute"]
 ----
 oc delete namespace debug-lab --ignore-not-found --wait=false
 echo "Cleanup running in background - you can continue to the next module"
 ----
-
-
-[WARNING]
-====
-*Before moving on:* Please run the cleanup commands in this module. This cluster has limited resources - leaving workloads running can cause resource pressure that may affect your experience in later modules.
-====

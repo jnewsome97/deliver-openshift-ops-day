@@ -312,6 +312,11 @@ You can view ingress controller health in the console at **Administration -> Clu
 image::ingress-images/ingress-operator-conditions.png[Ingress operator conditions showing Available, Progressing, Degraded status, link=self, window=blank]
 == Cleanup & Summary
 
+[WARNING]
+====
+*Before moving on:* Please run the cleanup commands in this module. This cluster has limited resources - leaving workloads running can cause resource pressure that may affect your experience in later modules.
+====
+
 [source,bash,role="execute"]
 ----
 # Remove annotations and reset route
@@ -353,9 +358,3 @@ oc get pods -n openshift-ingress -o wide
 
 * **Ingress Controller:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/networking/configuring-ingress-cluster-traffic[Configuring ingress cluster traffic, window=blank]
 * **Route Annotations:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/networking/configuring-ingress-cluster-traffic#nw-route-specific-annotations_route-configuration[Route-specific annotations, window=blank]
-
-
-[WARNING]
-====
-*Before moving on:* Please run the cleanup commands in this module. This cluster has limited resources - leaving workloads running can cause resource pressure that may affect your experience in later modules.
-====

@@ -348,6 +348,11 @@ For more information, see link:https://docs.redhat.com/en/documentation/red_hat_
 
 === Cleanup
 
+[WARNING]
+====
+*Before moving on:* Please run the cleanup commands in this module. This cluster has limited resources - leaving workloads running can cause resource pressure that may affect your experience in later modules.
+====
+
 [source,bash,role="execute"]
 ----
 (
@@ -358,9 +363,3 @@ For more information, see link:https://docs.redhat.com/en/documentation/red_hat_
 disown
 echo "Cleanup running in background - you can continue to the next module."
 ----
-
-
-[WARNING]
-====
-*Before moving on:* Please run the cleanup commands in this module. This cluster has limited resources - leaving workloads running can cause resource pressure that may affect your experience in later modules.
-====

@@ -662,6 +662,11 @@ The collector is now ready for production use. Developers point their apps at `o
 
 Remove the observability resources you deployed. The Prometheus monitoring stack is built-in and doesn't need cleanup.
 
+[WARNING]
+====
+*Before moving on:* Please run the cleanup commands in this module. This cluster has limited resources - leaving workloads running can cause resource pressure that may affect your experience in later modules.
+====
+
 [source,bash,subs="+attributes",role="execute"]
 ----
 if curl -fsSL --retry 3 --retry-delay 2 -o /tmp/cleanup-observability.sh {support_base_url}/cleanup-scripts/cleanup-observability.sh; then
@@ -720,9 +725,3 @@ oc get tempomonolithic -n tracing-system
 * **Logging 6.6 Stack:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/logging/about-logging[Logging 6.6, window=blank]
 * **OpenShift Distributed Tracing:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/distributed_tracing/index[Distributed Tracing, window=blank]
 * **Red Hat build of OpenTelemetry:** link:https://docs.redhat.com/en/documentation/red_hat_build_of_opentelemetry/[OpenTelemetry, window=blank]
-
-
-[WARNING]
-====
-*Before moving on:* Please run the cleanup commands in this module. This cluster has limited resources - leaving workloads running can cause resource pressure that may affect your experience in later modules.
-====

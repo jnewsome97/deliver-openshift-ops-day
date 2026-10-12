@@ -447,6 +447,11 @@ By creating and informing on the policies you have now ensured that the EMEA clu
 
 Remove the resources you created in this module (the EMEA hosted cluster, lab VM, GitOps application, and GDPR policy). This does not affect the pre-existing `managed-hcp` cluster or `rhel-webserver` VM.
 
+[WARNING]
+====
+*Before moving on:* Please run the cleanup commands in this module. This cluster has limited resources - leaving workloads running can cause resource pressure that may affect your experience in later modules.
+====
+
 [source,bash,subs="+attributes",role="execute"]
 ----
 if curl -fsSL --retry 3 --retry-delay 2 -o /tmp/cleanup-acm.sh {support_base_url}/cleanup-scripts/cleanup-acm.sh; then
@@ -467,10 +472,3 @@ fi
 * **Consistent app deployment** - Deploy and update applications to multiple clusters using Git-backed automation with OpenShift GitOps and RHACM.
 
 * **Automated compliance** - Define and enforce policies as code to meet residency and organizational requirements.
-
-
-
-[WARNING]
-====
-*Before moving on:* Please run the cleanup commands in this module. This cluster has limited resources - leaving workloads running can cause resource pressure that may affect your experience in later modules.
-====

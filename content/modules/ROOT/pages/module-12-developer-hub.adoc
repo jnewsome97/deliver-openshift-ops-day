@@ -434,15 +434,14 @@ TIP: Interested in building templates, configuring plugins, or platform engineer
 
 == Cleanup
 
+[WARNING]
+====
+*Before moving on:* Please run the cleanup commands in this module. This cluster has limited resources - leaving workloads running can cause resource pressure that may affect your experience in later modules.
+====
+
 [source,bash,role="execute"]
 ----
 oc patch backstage developer-hub -n backstage --type=merge -p '{"spec":{"monitoring":{"enabled":false}}}'
 oc delete namespace order-tracker 2>/dev/null
 echo "Cleanup complete"
 ----
-
-
-[WARNING]
-====
-*Before moving on:* Please run the cleanup commands in this module. This cluster has limited resources - leaving workloads running can cause resource pressure that may affect your experience in later modules.
-====

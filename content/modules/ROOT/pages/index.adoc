@@ -26,7 +26,7 @@ You should see your admin user.
 oc get nodes
 ----
 
-Three nodes, all `Ready`.
+Four nodes, all `Ready` - three control-plane nodes and one dedicated worker.
 
 [source,bash,role="execute"]
 ----
@@ -116,6 +116,9 @@ Your cluster is already running with monitoring, a container registry, ingress r
 The OpenShift Web Console provides a unified view of your entire cluster.
 
 image::ocp-console-overview.png[OpenShift Core Platform Console Overview, link=self, window=blank]
+
+NOTE: If your cluster was deployed with OpenShift Lightspeed, minimise the Lightspeed window and leave it minimised until the OpenShift Lightspeed module later in the workshop.
+
 You can access the console in two ways:
 
 * **OCP Console tab** - Click the **OCP Console** tab at the top of this workshop. The console is embedded directly in the workshop interface so you can follow along without switching windows.
@@ -315,16 +318,17 @@ Let's look at what you're running on:
 oc get nodes
 ----
 
-Your environment uses a **compact cluster** - 3 nodes that serve as both control plane and worker:
+Your environment has three control-plane nodes and one dedicated worker node:
 
 ----
-NAME                            STATUS   ROLES                         AGE   VERSION
-control-plane-cluster-xxxxx-1   Ready    control-plane,master,worker   20h   v1.x.x
-control-plane-cluster-xxxxx-2   Ready    control-plane,master,worker   20h   v1.x.x
-control-plane-cluster-xxxxx-3   Ready    control-plane,master,worker   20h   v1.x.x
+NAME                            STATUS   ROLES                         AGE    VERSION
+control-plane-cluster-xxxxx-1   Ready    control-plane,master,worker   166m   v1.x.x
+control-plane-cluster-xxxxx-2   Ready    control-plane,master,worker   179m   v1.x.x
+control-plane-cluster-xxxxx-3   Ready    control-plane,master,worker   179m   v1.x.x
+worker-cluster-xxxxx-1          Ready    worker                        114m   v1.x.x
 ----
 
-NOTE: Node names and count vary by deployment. Production clusters typically have separate control plane and worker nodes. This workshop uses a compact topology where all nodes serve both roles.
+NOTE: Node names vary by deployment. The three control-plane nodes also carry the `worker` role because OpenShift schedules some workloads there, but this cluster has a dedicated worker node as well.
 
 **Check Node Details (Console)**
 
@@ -348,7 +352,7 @@ image::nodes-console-view.png[Nodes Console View, link=self, window=blank]
 
 **MachineSets - Automated Infrastructure Scaling**
 
-OpenShift uses **MachineSets** to automate infrastructure scaling. On cloud platforms (AWS, Azure, GCP), MachineSets manage worker nodes across availability zones - you can scale up by changing a replica count rather than manually provisioning machines.
+OpenShift uses **MachineSets** to automate infrastructure scaling. A MachineSet defines a template for worker nodes (instance type, region, zone) and the Machine API provisions and joins nodes automatically when you scale the replica count up or down.
 
 NOTE: When Advanced Cluster Management (ACM) is installed, `machinesets` exists in two API groups (Cluster API and OpenShift Machine API). We use the full resource name `machinesets.machine.openshift.io` to target OpenShift's Machine API.
 
@@ -357,44 +361,33 @@ NOTE: When Advanced Cluster Management (ACM) is installed, `machinesets` exists 
 oc get machinesets.machine.openshift.io -n openshift-machine-api
 ----
 
-Your compact cluster has a single MachineSet scaled to 0 - all 3 nodes serve as both control plane and worker, so no separate worker machines are needed:
-
 ----
 NAME                           DESIRED   CURRENT   READY   AVAILABLE   AGE
-cluster-xxxxx-worker-0         0         0                             20h
+cluster-xxxxx-worker-0         0         0                             3h
 ----
 
-In a production cloud deployment, you'd see multiple MachineSets (one per availability zone) with active worker replicas that can be scaled up or down.
+The MachineSet shows 0, which is expected. This workshop cluster runs on OpenShift Virtualization (CNV) infrastructure, and the worker node was provisioned directly by the lab automation rather than through the Machine API. The MachineSet exists as a template but has not been used to scale any nodes in this environment.
 
-You can see this in the console at **Compute -> MachineSets**:
-
-image::machinesets-console.png[MachineSets view showing worker MachineSet with 0 of 0 machines on compact cluster, link=self, window=blank]
-In a production cluster, this view shows the machine count, instance type, CPU, and memory for each MachineSet - and you can scale directly from the console by editing the desired count.
-
-You can also view the machine resources:
+You can also check the Machine objects the API is actually managing:
 
 [source,bash,role="execute"]
 ----
 oc get machines.machine.openshift.io -n openshift-machine-api
 ----
 
-This shows the underlying compute instances that OpenShift is managing.
+You'll see only the three control-plane machines. The worker node has no corresponding Machine object because it was provisioned outside of the Machine API.
 
-=== Scaling Workers
+In a production deployment, every worker node would have a Machine object and be managed through a MachineSet. On cloud platforms (AWS, Azure, GCP), you'd typically have one MachineSet per availability zone with active replicas. Scaling is then one command:
 
-To add another worker node, simply scale the MachineSet:
-
-WARNING: Do not run this command - it is shown as an example only. This workshop environment does not have spare hosts available for scaling.
+WARNING: Do not run this - shown as an example only. No spare capacity is pre-allocated in this lab environment.
 
 [source,bash]
 ----
-# Example - scales a zone from 0 to 1 worker
+# Example - scales a MachineSet from 0 to 1 worker
 oc scale machineset.machine.openshift.io <machineset-name> --replicas=1 -n openshift-machine-api
 ----
 
-OpenShift automatically provisions a compute instance, configures it, and joins it to the cluster - one command to scale your infrastructure.
-
-NOTE: This workshop environment runs on bare metal without spare hosts available, so scaling is shown as an example rather than a live exercise. On cloud platforms (AWS, Azure, GCP), the Machine API provisions new instances automatically.
+OpenShift provisions the node, configures it, and joins it to the cluster automatically.
 
 === Over-the-Air Upgrades
 

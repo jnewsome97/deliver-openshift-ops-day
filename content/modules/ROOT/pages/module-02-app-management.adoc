@@ -236,17 +236,29 @@ Check the pods:
 oc get pods -n app-management
 ----
 
-You should see pods showing `0/1 Running` - the container is running, but the readiness probe is failing so OpenShift won't send traffic to them. In the **OCP Console**, go to **Workloads -> Pods** (project: `app-management`):
+You should see pods showing `0/1 Running` - the container is running, but the readiness probe is failing so OpenShift won't send traffic to them.
 
-image::broken-probe-pods.png[Pod list showing 0/1 Running pod with failed readiness probe, link=self, window=blank]
-Click the `0/1` pod, then the **Events** tab. You'll see repeated `Readiness probe failed: dial tcp ... connect: connection refused` messages:
+Check what the probe is reporting:
 
-image::broken-probe-events.png[Events tab showing readiness probe failure messages, link=self, window=blank]
-Check via CLI too:
+[source,bash,role="execute"]
+----
+oc get events -n app-management --field-selector reason=Unhealthy --sort-by='.lastTimestamp'
+----
+
+----
+LAST SEEN   TYPE      REASON      OBJECT                          MESSAGE
+2m          Warning   Unhealthy   pod/weathernow-xxxxx            Readiness probe failed: dial tcp x.x.x.x:9999: connect: connection refused
+----
+
+You can also check the probe configuration directly:
 
 [source,bash,role="execute"]
 ----
 oc describe pod -l deployment=weathernow -n app-management | grep -A2 "Readiness"
+----
+
+----
+    Readiness:      tcp-socket :9999 delay=5s timeout=1s period=5s #success=1 #failure=3
 ----
 
 The pod is alive but not ready. No traffic reaches it. This is exactly what happens in production when an app's health endpoint goes down - OpenShift protects users from broken pods automatically.
@@ -489,6 +501,11 @@ You completed the core application lifecycle on OpenShift:
 
 **Key commands:**
 
+[WARNING]
+====
+*Before moving on:* Please run the cleanup commands in this module. This cluster has limited resources - leaving workloads running can cause resource pressure that may affect your experience in later modules.
+====
+
 [source,bash]
 ----
 oc new-app --name=myapp --image=myimage       # Deploy
@@ -509,9 +526,3 @@ echo "Cleanup complete"
 ----
 
 NOTE: This waits for the namespace to be fully deleted before returning. This ensures the next module can recreate it cleanly.
-
-
-[WARNING]
-====
-*Before moving on:* Please run the cleanup commands in this module. This cluster has limited resources - leaving workloads running can cause resource pressure that may affect your experience in later modules.
-====

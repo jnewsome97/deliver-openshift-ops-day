@@ -137,12 +137,12 @@ oc get machineconfigpool
 
 Your output will look similar to:
 ----
-NAME     CONFIG             UPDATED   UPDATING   DEGRADED   MACHINECOUNT   READYMACHINECOUNT
-master   rendered-master-…  True      False      False      3              3
-worker   rendered-worker-…  True      False      False      0              0
+NAME     CONFIG                                             UPDATED   UPDATING   DEGRADED   MACHINECOUNT   READYMACHINECOUNT   UPDATEDMACHINECOUNT   DEGRADEDMACHINECOUNT   AGE
+master   rendered-master-…   True      False      False      3              3                   3                     0                      178m
+worker   rendered-worker-…   True      False      False      1              1                   1                     0                      178m
 ----
 
-NOTE: On this compact cluster the worker pool shows 0 machines because all nodes serve both control-plane and worker roles under the master pool.
+NOTE: The `master` pool covers the three control-plane nodes and the `worker` pool covers the dedicated worker node. Both pools show `UPDATED=True` and `DEGRADED=False`, confirming all node configurations are current.
 
 **What this shows:**
 
