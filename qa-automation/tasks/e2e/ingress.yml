@@ -83,6 +83,8 @@
               name: test-app
             tls:
               termination: edge
+      loop_control:
+        label: "{{ item.kind }}/{{ item.metadata.name }}"
 
     - name: "Ingress | Wait for test-app to roll out"
       kubernetes.core.k8s_info:

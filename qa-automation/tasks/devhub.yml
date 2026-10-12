@@ -54,11 +54,15 @@
     - inventory-team
     - platform-services
     - ops-track-demo
+  loop_control:
+    label: "{{ item }}"
 
 - name: "Devhub | Record failure for any missing/non-Active RHDH workshop team namespace"
   ansible.builtin.set_fact:
     hc_failures: "{{ hc_failures + ['devhub: workshop namespace ' + item.item + ' missing or not Active (used by RHDH topology/catalog exercises)'] }}"
   loop: "{{ hc_devhub_team_ns.results }}"
+  loop_control:
+    label: "{{ item.item }}"
   when: >-
     item is failed or
     item.resources | default([]) | length == 0 or

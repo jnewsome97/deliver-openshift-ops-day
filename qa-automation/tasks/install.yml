@@ -16,6 +16,8 @@
   ansible.builtin.set_fact:
     hc_failures: "{{ hc_failures + ['install: ClusterOperator ' + item.metadata.name + ' is not healthy (Available/Degraded)'] }}"
   loop: "{{ hc_install_operators.resources | default([]) }}"
+  loop_control:
+    label: "{{ item.metadata.name }}"
   when: >-
     hc_install_operators is failed or
     (
@@ -50,6 +52,8 @@
   ansible.builtin.set_fact:
     hc_failures: "{{ hc_failures + ['install: MachineConfigPool ' + item.metadata.name + ' is Degraded'] }}"
   loop: "{{ hc_install_mcp.resources | default([]) }}"
+  loop_control:
+    label: "{{ item.metadata.name }}"
   when: >-
     hc_install_mcp is failed or
     (

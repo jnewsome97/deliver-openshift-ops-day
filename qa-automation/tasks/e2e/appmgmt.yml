@@ -66,6 +66,8 @@
             ports:
               - port: 8080
                 targetPort: 8080
+      loop_control:
+        label: "{{ item.kind }}/{{ item.metadata.name }}"
 
     - name: "Appmgmt | Wait for weathernow to roll out"
       kubernetes.core.k8s_info:

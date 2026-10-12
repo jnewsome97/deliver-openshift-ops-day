@@ -83,12 +83,16 @@
         - content
         # - automation/gitops/bootstrap-infra
         - automation/ansible
+      loop_control:
+        label: "{{ item }}"
 
     - name: "Base | Record failure for any missing top-level directory"
       ansible.builtin.set_fact:
         hc_failures: "{{ hc_failures + ['base: expected directory missing: ' + item.item] }}"
       loop: "{{ dir_stat.results }}"
       when: item is failed or not item.stat.exists or not item.stat.isdir
+      loop_control:
+        label: "{{ item.item }}"
 
     - name: "Base | oc whoami"
       ansible.builtin.command: oc whoami

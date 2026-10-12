@@ -114,6 +114,8 @@
                 persistentVolumeClaim:
                   claimName: test-pvc
             restartPolicy: Never
+      loop_control:
+        label: "{{ item.kind }}/{{ item.metadata.name }}"
 
     - name: "Install | Wait for test-app Deployment to roll out"
       kubernetes.core.k8s_info:

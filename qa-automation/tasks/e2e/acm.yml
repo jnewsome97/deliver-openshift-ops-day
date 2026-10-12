@@ -119,6 +119,8 @@
             - name: qa-e2e-policy-compliance
               kind: Policy
               apiGroup: policy.open-cluster-management.io
+      loop_control:
+        label: "{{ item.kind }}/{{ item.metadata.name }}"
 
     # Propagation + enforcement to local-cluster isn't instant -- give it a
     # bounded window rather than looping indefinitely.
@@ -156,6 +158,8 @@
         - { api_version: cluster.open-cluster-management.io/v1beta1, kind: Placement, name: qa-e2e-placement-policy-compliance }
         - { api_version: policy.open-cluster-management.io/v1, kind: Policy, name: qa-e2e-policy-compliance }
         - { api_version: cluster.open-cluster-management.io/v1beta2, kind: ManagedClusterSetBinding, name: default }
+      loop_control:
+        label: "{{ item.kind }}/{{ item.name }}"
       ignore_errors: true
 
     # The ConfigurationPolicy's musthave namespace is created directly on

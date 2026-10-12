@@ -101,6 +101,8 @@
         - { api_version: "v1", kind: "ResourceQuota", name: "compute-quota" }
         - { api_version: "v1", kind: "LimitRange", name: "default-limits" }
         - { api_version: "networking.k8s.io/v1", kind: "NetworkPolicy", name: "deny-from-other-namespaces" }
+      loop_control:
+        label: "{{ item.kind }}/{{ item.name }}"
       failed_when: e2e_gitops_bundle.resources | default([]) | length == 0
 
     - name: "Gitops | Simulate drift by patching compute-quota pod limit"

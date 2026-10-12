@@ -20,6 +20,8 @@
   loop:
     - qa-e2e-netpol-frontend
     - qa-e2e-netpol-backend
+  loop_control:
+    label: "{{ item }}"
 
 - name: "Netsec | Wait for qa-e2e netpol projects to be deleted"
   ansible.builtin.command: oc get project {{ item }}
@@ -31,6 +33,8 @@
   loop:
     - qa-e2e-netpol-frontend
     - qa-e2e-netpol-backend
+  loop_control:
+    label: "{{ item }}"
 
 - name: "Netsec | Run deny-all/allow NetworkPolicy sequence"
   block:
@@ -43,6 +47,8 @@
       loop:
         - qa-e2e-netpol-frontend
         - qa-e2e-netpol-backend
+      loop_control:
+        label: "{{ item }}"
 
     - name: "Netsec | Label frontend namespace for the allow rule's namespaceSelector"
       kubernetes.core.k8s:
@@ -100,6 +106,8 @@
                     image: registry.access.redhat.com/ubi9/httpd-24
                     ports:
                       - containerPort: 8080
+      loop_control:
+        label: "{{ item.kind }}/{{ item.metadata.name }}"
 
     - name: "Netsec | Wait for frontend and backend pods to be Running"
       kubernetes.core.k8s_info:
@@ -117,6 +125,8 @@
       loop:
         - qa-e2e-netpol-frontend
         - qa-e2e-netpol-backend
+      loop_control:
+        label: "{{ item }}"
 
     - name: "Netsec | Get backend pod IP"
       kubernetes.core.k8s_info:
@@ -208,6 +218,8 @@
       loop:
         - qa-e2e-netpol-frontend
         - qa-e2e-netpol-backend
+      loop_control:
+        label: "{{ item }}"
 
     - name: "Netsec | Wait for qa-e2e netpol projects to be deleted"
       ansible.builtin.command: oc get project {{ item }}
@@ -219,3 +231,5 @@
       loop:
         - qa-e2e-netpol-frontend
         - qa-e2e-netpol-backend
+      loop_control:
+        label: "{{ item }}"

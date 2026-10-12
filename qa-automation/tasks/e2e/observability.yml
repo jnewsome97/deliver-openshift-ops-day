@@ -105,7 +105,7 @@
         method: GET
         validate_certs: false
         headers:
-          Authorization: "Bearer {{ lookup('ansible.builtin.file', k8s_kubeconfig) | regex_search('token:\\s*(\\S+)', '\\1') | first | default('') }}"
+          Authorization: "Bearer {{ lookup('ansible.builtin.file', '/var/run/secrets/kubernetes.io/serviceaccount/token') }}"
         return_content: true
       register: e2e_observability_alert_query
       ignore_errors: true
@@ -114,6 +114,15 @@
       until: >-
         e2e_observability_alert_query is success and
         'QaE2eHighPodRestartRate' in (e2e_observability_alert_query.content | default(''))
+
+    - name: "Observability | Record failure if alert was never confirmed in Thanos"
+      ansible.builtin.set_fact:
+        hc_failures: >-
+          {{ hc_failures + ['observability e2e: QaE2eHighPodRestartRate alert not confirmed in Thanos (HTTP '
+             + (e2e_observability_alert_query.status | default('error') | string) + ')'] }}
+      when: >-
+        e2e_observability_alert_query is failed or
+        'QaE2eHighPodRestartRate' not in (e2e_observability_alert_query.content | default(''))
   always:
     - name: "Observability | Delete qa-e2e-observability-alert project"
       kubernetes.core.k8s:

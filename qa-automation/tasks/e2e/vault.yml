@@ -230,65 +230,78 @@
         "VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=root vault kv put secret/qa-e2e-eso-test username=qa-e2e-eso-user password=qa-e2e-eso-password"
       changed_when: true
 
-    # Raw `helm` CLI (not kubernetes.core.helm) -- the module hard-rejects
-    # Helm v4 binaries (>=4.0.0 not supported). Mirrors the same raw-helm
-    # pattern automation/ansible/roles/ocp4_days_workload_vault already uses
-    # to install Vault itself, so this isn't introducing a new convention.
-    #
-    # Unlike that provisioning-time execution environment, the Showroom
-    # pod's own runner container (where this e2e suite actually runs) has
-    # no helm binary on PATH at all -- fetch a pinned v3 release into a
-    # scratch dir and use its full path instead of relying on PATH.
-    - name: "Vault | Check for an existing helm binary on PATH"
-      ansible.builtin.command: which helm
-      register: eso_helm_which
+    # ESO is expected to be pre-installed by the provisioning workload. Check
+    # first; only attempt a Helm install if it's genuinely absent. The Showroom
+    # pod has no outbound internet access, so the helm-download path below would
+    # hang indefinitely if triggered unnecessarily.
+    - name: "Vault | Check if External Secrets Operator is already installed"
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        namespace: external-secrets
+        label_selectors:
+          - app.kubernetes.io/name=external-secrets
+      register: eso_preinstalled
       changed_when: false
-      failed_when: false
 
-    - name: "Vault | Download pinned helm v3 binary if none is on PATH"
-      when: eso_helm_which.rc != 0
+    - name: "Vault | Install ESO via Helm if not already present"
+      when: eso_preinstalled.resources | default([]) | length == 0
       block:
-        - name: "Vault | Create scratch dir for helm binary"
-          ansible.builtin.file:
-            path: /tmp/qa-e2e-helm
-            state: directory
-            mode: "0755"
+        # Raw `helm` CLI (not kubernetes.core.helm) -- the module hard-rejects
+        # Helm v4 binaries (>=4.0.0 not supported). The Showroom pod runner has
+        # no helm binary on PATH, so fetch a pinned v3 release into a scratch
+        # dir. NOTE: this path requires outbound internet access; it only runs
+        # when ESO is genuinely missing from the cluster.
+        - name: "Vault | Check for an existing helm binary on PATH"
+          ansible.builtin.command: which helm
+          register: eso_helm_which
+          changed_when: false
+          failed_when: false
 
-        - name: "Vault | Download and extract helm v3.16.4"
-          ansible.builtin.unarchive:
-            src: https://get.helm.sh/helm-v3.16.4-linux-amd64.tar.gz
-            dest: /tmp/qa-e2e-helm
-            remote_src: true
+        - name: "Vault | Download pinned helm v3 binary if none is on PATH"
+          when: eso_helm_which.rc != 0
+          block:
+            - name: "Vault | Create scratch dir for helm binary"
+              ansible.builtin.file:
+                path: /tmp/qa-e2e-helm
+                state: directory
+                mode: "0755"
 
-        - name: "Vault | Set helm binary path to the downloaded copy"
+            - name: "Vault | Download and extract helm v3.16.4"
+              ansible.builtin.unarchive:
+                src: https://get.helm.sh/helm-v3.16.4-linux-amd64.tar.gz
+                dest: /tmp/qa-e2e-helm
+                remote_src: true
+
+            - name: "Vault | Set helm binary path to the downloaded copy"
+              ansible.builtin.set_fact:
+                eso_helm_bin: /tmp/qa-e2e-helm/linux-amd64/helm
+
+        - name: "Vault | Set helm binary path to the one already on PATH"
+          when: eso_helm_which.rc == 0
           ansible.builtin.set_fact:
-            eso_helm_bin: /tmp/qa-e2e-helm/linux-amd64/helm
+            eso_helm_bin: "{{ eso_helm_which.stdout | trim }}"
 
-    - name: "Vault | Set helm binary path to the one already on PATH"
-      when: eso_helm_which.rc == 0
-      ansible.builtin.set_fact:
-        eso_helm_bin: "{{ eso_helm_which.stdout | trim }}"
+        - name: "Vault | Add external-secrets Helm repo"
+          ansible.builtin.command: "{{ eso_helm_bin }} repo add external-secrets https://charts.external-secrets.io"
+          register: eso_repo_add
+          changed_when: "'has been added' in eso_repo_add.stdout"
+          failed_when: eso_repo_add.rc != 0 and 'already exists' not in eso_repo_add.stderr
+          ignore_errors: true
 
-    - name: "Vault | Add external-secrets Helm repo"
-      ansible.builtin.command: "{{ eso_helm_bin }} repo add external-secrets https://charts.external-secrets.io"
-      register: eso_repo_add
-      changed_when: "'has been added' in eso_repo_add.stdout"
-      failed_when: eso_repo_add.rc != 0 and 'already exists' not in eso_repo_add.stderr
-      ignore_errors: true
+        - name: "Vault | Update external-secrets Helm repo"
+          ansible.builtin.command: "{{ eso_helm_bin }} repo update external-secrets"
+          changed_when: true
 
-    - name: "Vault | Update external-secrets Helm repo"
-      ansible.builtin.command: "{{ eso_helm_bin }} repo update external-secrets"
-      changed_when: true
-
-    - name: "Vault | Install External Secrets Operator (idempotent)"
-      ansible.builtin.command: >-
-        {{ eso_helm_bin }} upgrade --install external-secrets external-secrets/external-secrets
-        --namespace external-secrets --create-namespace
-        --set installCRDs=true
-        --wait --timeout 10m0s
-      register: eso_helm_install
-      changed_when: true
-      failed_when: eso_helm_install.rc != 0
+        - name: "Vault | Install External Secrets Operator"
+          ansible.builtin.command: >-
+            {{ eso_helm_bin }} upgrade --install external-secrets external-secrets/external-secrets
+            --namespace external-secrets --create-namespace
+            --set installCRDs=true
+            --wait --timeout 10m0s
+          register: eso_helm_install
+          changed_when: true
+          failed_when: eso_helm_install.rc != 0
 
     - name: "Vault | Wait for ESO deployment to be ready"
       kubernetes.core.k8s_info:
@@ -421,6 +434,8 @@
         - { api_version: "external-secrets.io/v1", kind: SecretStore, name: qa-e2e-vault-backend }
         - { api_version: v1, kind: Secret, name: qa-e2e-vault-token }
         - { api_version: v1, kind: Secret, name: qa-e2e-secret-sync }
+      loop_control:
+        label: "{{ item.kind }}/{{ item.name }}"
       ignore_errors: true
 
     - name: "Vault | Delete qa-e2e ESO test secret"
