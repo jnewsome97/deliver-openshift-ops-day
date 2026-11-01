@@ -1,23 +1,86 @@
 ---
 # OpenShift Lightspeed module (module_enable_ols).
-# healthcheck.yml's tasks/ols.yml already confirms OLSConfig/cluster and the
-# lightspeed-app-server Deployment are ready -- this file exercises the
-# actual hands-on flow from content/modules/ROOT/pages/module-13-lightspeed.adoc:
-# asking Lightspeed a real question and getting back a real, RAG-grounded
-# answer, the same as a learner does through the console chat window.
+# Mirrors the learner flow from module-13-lightspeed.adoc:
 #
-# The module's "Cluster Interaction and Troubleshooting" section uses a
-# pre-provisioned lightspeed-demo namespace / broken-pod fixture that the
-# learner inspects and eventually deletes themselves (module's own cleanup
-# step). This file deliberately does NOT touch that namespace/pod -- deleting
-# or recreating it here would destroy a live learner's in-progress
-# troubleshooting exercise on the same claim. It only reads it, which is safe
-# to do concurrently with a learner also reading it.
+# 1. Pod verification  — all 9 Deployments in openshift-lightspeed have readyReplicas >= 1
+#                        (classic OLS: app-server, console-plugin, otel-collector,
+#                         postgres-server, rhokp, mcp-server;
+#                         agentic OLS: alerts-adapter, agentic-console-plugin, agentic-operator)
+# 2. Config review     — azure-api-keys Secret exists; OLSConfig exists and has introspectionEnabled: true
+# 3. LLM connectivity  — oc exec + curl /v1/query; HTTP 200 + non-empty response proves
+#                        the Azure OpenAI backend is reachable and responding
+# 4. Fixture check     — Namespace/critical exists with Deployment/critical-service at
+#                        readyReplicas==0 and PDB/critical-service-pdb; these are the
+#                        resources that trigger the PodDisruptionBudgetLimit alert
+# 5. Cluster updates   — ClusterVersion has availableUpdates (required for the
+#                        AI-assisted precheck section of the module)
+# 6. Agentic workflow  — enables the alerts-adapter severity filter, verifies AgenticRuns
+#                        exist (created automatically by the CVO when updates are available),
+#                        verifies MaaS LLM connectivity from the agentic-operator pod,
+#                        then restores the adapter to its disabled state in an always block
 #
-# Lightspeed has no external Route (ClusterIP only, no public endpoint for
-# the /v1/query API), so the query below runs via `oc exec` into the
-# lightspeed-app-server pod itself and curls its own localhost API -- this
-# needs no new resources, so no cleanup/isolation concern applies.
+# Steps skipped (web console only, no headless API):
+# - Conversational AI chat questions and workload creation via chat
+# - Troubleshooting mode investigation
+# - AI-assisted cluster update precheck UI interaction
+# - AgenticRun approve / execute / verify phases
+
+# -- 1. Pod verification ---------------------------------------------------
+# Matches the exact `oc get pods -n openshift-lightspeed` the learner runs first.
+# Checks all 9 Deployments by name rather than "any pod Running" to catch a
+# partially-deployed operator where some components are up but others are not.
+
+- name: "Ols | Verify all OpenShift Lightspeed deployments are ready"
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: "{{ item }}"
+    namespace: openshift-lightspeed
+  register: hc_ols_e2e_deploy
+  failed_when: >-
+    hc_ols_e2e_deploy.resources | default([]) | length == 0 or
+    (hc_ols_e2e_deploy.resources[0].status.readyReplicas | default(0) | int) < 1
+  loop:
+    - lightspeed-agentic-alerts-adapter
+    - lightspeed-agentic-console-plugin
+    - lightspeed-agentic-operator
+    - lightspeed-app-server
+    - lightspeed-console-plugin
+    - lightspeed-otel-collector
+    - lightspeed-postgres-server
+    - lightspeed-rhokp
+    - openshift-mcp-server
+  loop_control:
+    label: "{{ item }}"
+
+# -- 2. Config review ------------------------------------------------------
+
+- name: "Ols | Verify azure-api-keys secret exists"
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Secret
+    name: azure-api-keys
+    namespace: openshift-lightspeed
+  register: hc_ols_e2e_secret
+  failed_when: >-
+    hc_ols_e2e_secret.resources | default([]) | length == 0
+
+- name: "Ols | Verify OLSConfig has introspectionEnabled: true"
+  kubernetes.core.k8s_info:
+    api_version: ols.openshift.io/v1alpha1
+    kind: OLSConfig
+    name: cluster
+  register: hc_ols_e2e_config
+  failed_when: >-
+    hc_ols_e2e_config.resources | default([]) | length == 0 or
+    not (hc_ols_e2e_config.resources[0].spec.ols.introspectionEnabled | default(false) | bool)
+
+# -- 3. LLM connectivity: /v1/query ----------------------------------------
+
+- name: "Ols | Get token for Lightspeed API query"
+  ansible.builtin.command: oc whoami -t
+  register: hc_ols_e2e_token
+  changed_when: false
 
 - name: "Ols | Get lightspeed-app-server pod name"
   kubernetes.core.k8s_info:
@@ -28,11 +91,6 @@
       - app.kubernetes.io/name=lightspeed-service-api
   register: hc_ols_e2e_pods
   failed_when: hc_ols_e2e_pods.resources | default([]) | length == 0
-
-- name: "Ols | Get token for Lightspeed API query"
-  ansible.builtin.command: oc whoami -t
-  register: hc_ols_e2e_token
-  changed_when: false
 
 - name: "Ols | Ask Lightspeed a real question via its /v1/query API"
   vars:
@@ -61,10 +119,218 @@
       - -H
       - "Content-Type: application/json"
       - -d
-      - '{"query":"What is the difference between a Deployment and a StatefulSet in OpenShift?"}'
+      - '{"query":"What is the difference between a Deployment and a Pod?"}'
   register: hc_ols_e2e_query
   changed_when: false
   failed_when: >-
     hc_ols_e2e_query.rc != 0 or
     'HTTP_STATUS:200' not in hc_ols_e2e_query.stdout or
     (hc_ols_e2e_query.stdout | regex_search('"response"\s*:\s*"(.*?)(?<!\\\\)"') | default('') | length) < 20
+
+# -- 4. Troubleshooting fixture --------------------------------------------
+# Checks the resources that cause the PodDisruptionBudgetLimit 
+# (the alert takes time to appear after provisioning).
+#
+# The fixture is created by ocp4_workload_lightspeed_demo:
+#   - Namespace: critical
+#   - Deployment/critical-service: 3 replicas, init container always exits 1
+#     → all pods stuck in Init:CrashLoopBackOff → readyReplicas == 0
+#   - PodDisruptionBudget/critical-service-pdb: minAvailable: 2
+#     → PDB violated (0 healthy < 2 required) → PodDisruptionBudgetLimit fires
+
+- name: "Ols | Verify critical namespace exists"
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: critical
+  register: hc_ols_e2e_critical_ns
+  failed_when: hc_ols_e2e_critical_ns.resources | default([]) | length == 0
+
+- name: "Ols | Verify critical-service deployment has no ready replicas"
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: critical-service
+    namespace: critical
+  register: hc_ols_e2e_critical_deploy
+  failed_when: >-
+    hc_ols_e2e_critical_deploy.resources | default([]) | length == 0 or
+    (hc_ols_e2e_critical_deploy.resources[0].status.readyReplicas | default(0) | int) != 0
+
+- name: "Ols | Verify critical-service-pdb PodDisruptionBudget exists"
+  kubernetes.core.k8s_info:
+    api_version: policy/v1
+    kind: PodDisruptionBudget
+    name: critical-service-pdb
+    namespace: critical
+  register: hc_ols_e2e_critical_pdb
+  failed_when: hc_ols_e2e_critical_pdb.resources | default([]) | length == 0
+
+# -- 5. Cluster update availability ----------------------------------------
+# The AI-assisted precheck section requires at least one update to be available
+# in the cluster. This confirms the console would show the AI assessment section.
+
+- name: "Ols | Verify cluster updates are available for AI precheck"
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: ClusterVersion
+    name: version
+  register: hc_ols_e2e_cv
+  failed_when: >-
+    hc_ols_e2e_cv.resources | default([]) | length == 0 or
+    hc_ols_e2e_cv.resources[0].status.availableUpdates | default([]) | length == 0
+
+# -- 6. Agentic OLS --------------------------------------------------------
+# Enables the alerts-adapter severity filter (disabled at provisioning time)
+# and verifies that AgenticRuns exist — the CVO creates them automatically
+# when cluster updates are available (confirmed in section 5 above), so they
+# are always present post-provision without waiting for an alert to fire.
+# The always block restores the adapter to its disabled state.
+
+- name: "Ols | Enable alerts-adapter and verify AgenticRuns exist"
+  block:
+    - name: "Ols | Enable critical severity filter on alerts-adapter-config"
+      ansible.builtin.command:
+        argv:
+          - oc
+          - patch
+          - configmap
+          - alerts-adapter-config
+          - -n
+          - openshift-lightspeed
+          - --type
+          - merge
+          - -p
+          - '{"data":{"config.yaml":"filtering:\n  allowedReceivers:\n    - critical\n"}}'
+      changed_when: true
+
+    - name: "Ols | Restart alerts-adapter to pick up the new config"
+      ansible.builtin.command:
+        argv:
+          - oc
+          - rollout
+          - restart
+          - deployment/lightspeed-agentic-alerts-adapter
+          - -n
+          - openshift-lightspeed
+      changed_when: true
+
+    - name: "Ols | Wait for alerts-adapter rollout to complete"
+      ansible.builtin.command:
+        argv:
+          - oc
+          - rollout
+          - status
+          - deployment/lightspeed-agentic-alerts-adapter
+          - -n
+          - openshift-lightspeed
+          - --timeout=120s
+      changed_when: false
+
+    - name: "Ols | Verify AgenticRuns exist (created automatically by the Cluster Version Operator)"
+      ansible.builtin.command:
+        argv:
+          - oc
+          - get
+          - agenticruns
+          - -n
+          - openshift-lightspeed
+          - -o
+          - name
+      register: hc_ols_e2e_agenticruns
+      changed_when: false
+      failed_when: hc_ols_e2e_agenticruns.stdout_lines | default([]) | length == 0
+
+    - name: "Ols | Get LLMProvider maas to read MaaS URL"
+      kubernetes.core.k8s_info:
+        api_version: agentic.openshift.io/v1alpha1
+        kind: LLMProvider
+        name: maas
+        namespace: openshift-lightspeed
+      register: hc_ols_e2e_llmprovider
+      failed_when: hc_ols_e2e_llmprovider.resources | default([]) | length == 0
+
+    - name: "Ols | Get Agent default to read MaaS model name"
+      kubernetes.core.k8s_info:
+        api_version: agentic.openshift.io/v1alpha1
+        kind: Agent
+        name: default
+        namespace: openshift-lightspeed
+      register: hc_ols_e2e_agent
+      failed_when: hc_ols_e2e_agent.resources | default([]) | length == 0
+
+    - name: "Ols | Get llm-creds-maas secret to read MaaS API key"
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Secret
+        name: llm-creds-maas
+        namespace: openshift-lightspeed
+      register: hc_ols_e2e_maas_secret
+      failed_when: hc_ols_e2e_maas_secret.resources | default([]) | length == 0
+
+    - name: "Ols | Ask MaaS a real question via its /v1/chat/completions API"
+      vars:
+        hc_ols_e2e_maas_url: "{{ hc_ols_e2e_llmprovider.resources[0].spec.openAI.url }}"
+        hc_ols_e2e_maas_key: "{{ hc_ols_e2e_maas_secret.resources[0].data.OPENAI_API_KEY | b64decode }}"
+        hc_ols_e2e_maas_model: "{{ hc_ols_e2e_agent.resources[0].spec.model }}"
+      ansible.builtin.uri:
+        url: "{{ hc_ols_e2e_maas_url }}/chat/completions"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ hc_ols_e2e_maas_key }}"
+          Content-Type: application/json
+        body_format: json
+        body:
+          model: "{{ hc_ols_e2e_maas_model }}"
+          messages:
+            - role: user
+              content: "What is an AgenticRun in OpenShift Lightspeed?"
+        validate_certs: true
+        status_code: 200
+      register: hc_ols_e2e_maas
+      changed_when: false
+      failed_when: >-
+        hc_ols_e2e_maas.status != 200 or
+        (hc_ols_e2e_maas.json.choices | default([]) | length == 0) or
+        (hc_ols_e2e_maas.json.choices[0].message.content | default('') | length) < 20
+
+  always:
+    - name: "Ols | Disable alerts-adapter severity filter (restore empty allowedReceivers)"
+      ansible.builtin.command:
+        argv:
+          - oc
+          - patch
+          - configmap
+          - alerts-adapter-config
+          - -n
+          - openshift-lightspeed
+          - --type
+          - merge
+          - -p
+          - '{"data":{"config.yaml":"filtering:\n  allowedReceivers: []\n"}}'
+      changed_when: true
+
+    - name: "Ols | Restart alerts-adapter to apply the empty filter"
+      ansible.builtin.command:
+        argv:
+          - oc
+          - rollout
+          - restart
+          - deployment/lightspeed-agentic-alerts-adapter
+          - -n
+          - openshift-lightspeed
+      changed_when: true
+
+    - name: "Ols | Delete any AgenticRuns created by the alerts-adapter"
+      ansible.builtin.command:
+        argv:
+          - oc
+          - delete
+          - agenticruns
+          - -n
+          - openshift-lightspeed
+          - -l
+          - agentic.openshift.io/source=alertmanager
+          - --ignore-not-found
+          - --wait=false
+      changed_when: true
