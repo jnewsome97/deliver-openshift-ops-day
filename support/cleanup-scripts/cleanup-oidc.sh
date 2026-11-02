@@ -58,7 +58,7 @@ oc adm policy remove-cluster-role-from-user lightspeed-operator-query-access dev
 # sequential rollouts over ~14 minutes. "oc rollout status" already knows
 # how to wait for one rollout to finish; the only thing we need on top is to
 # notice if another one starts right after, and wait again.
-echo "Waiting for OAuth to fully stabilize - do NOT reload or log in to the OCP Console tab until this finishes."
+echo "Waiting for OAuth to fully stabilize - do NOT log back in to or reload the OCP Console tab until this finishes."
 MAX_WAIT_SECS=1200
 SETTLE_SECS=30
 SECONDS=0
@@ -67,7 +67,7 @@ while :; do
   REMAINING=$((MAX_WAIT_SECS - SECONDS))
   if [ "$REMAINING" -le 0 ] || ! oc rollout status deployment/oauth-openshift -n openshift-authentication --timeout="${REMAINING}s"; then
     echo "ERROR: oauth-openshift did not finish rolling out within ${MAX_WAIT_SECS}s total."
-    echo "Do NOT reload or log in to the OCP Console tab yet. Check 'oc get co authentication' and 'oc get pods -n openshift-authentication', then re-run this script once it settles."
+    echo "Do NOT log back in to or reload the OCP Console tab yet. Check 'oc get co authentication' and 'oc get pods -n openshift-authentication', then re-run this script once it settles."
     exit 1
   fi
   GEN_AFTER=$(oc get deployment oauth-openshift -n openshift-authentication -o jsonpath='{.metadata.generation}')
