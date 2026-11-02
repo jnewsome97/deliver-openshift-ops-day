@@ -103,4 +103,25 @@ if oc get namespace openshift-console-user-settings >/dev/null 2>&1; then
   done
 fi
 
+# Restore the acm perspective that configure-oauth-oidc.sh temporarily
+# disabled for developer1's first login - module 14 (ACM) needs it back.
+if [ -f /tmp/.oidc-orig-perspectives.json ]; then
+  echo "Re-enabling the ACM Fleet-management console perspective..."
+  PATCH=$(python3 -c '
+import json
+with open("/tmp/.oidc-orig-perspectives.json") as f:
+    perspectives = json.load(f)
+print(json.dumps({"spec": {"customization": {"perspectives": perspectives}}}))
+')
+  oc patch consoles.operator.openshift.io cluster --type=merge -p "$PATCH"
+  rm -f /tmp/.oidc-orig-perspectives.json
+
+  echo "Waiting for the Console to pick up the perspective change and stabilize..."
+  if ! oc rollout status deployment/console -n openshift-console --timeout=300s; then
+    echo "ERROR: console did not finish rolling out within 300s."
+    echo "Check 'oc get co console' and 'oc get pods -n openshift-console', then re-run this script once it settles."
+    exit 1
+  fi
+fi
+
 echo "Cleanup complete - it is now safe to continue to the next module"

@@ -77,3 +77,39 @@ while :; do
 done
 
 echo "OAuth is live with rhbk provider and has been stable - it is now safe to log out and reload the console"
+
+# developer1 is about to log in for the very first time. With no
+# console.lastPerspective preference yet set for them, and the acm console
+# plugin enabled, OpenShift Console defaults brand-new users straight into
+# the ACM Fleet-management (multicloud) overview - which runs a 5s
+# operator-health poll plus an all-namespaces Events walk that has been
+# observed to pin a Console tab's renderer in a GC-thrashing freeze, in both
+# the embedded Showroom tab and a plain external browser tab. Temporarily
+# disable the acm perspective so developer1's first login lands on the
+# lightweight single-cluster Administrator view instead.
+# cleanup-oidc.sh restores whatever was here before.
+echo "Temporarily disabling the ACM Fleet-management console perspective so developer1's first login doesn't land there..."
+PERSPECTIVES_FILE=/tmp/.oidc-orig-perspectives.json
+oc get consoles.operator.openshift.io cluster -o jsonpath='{.spec.customization.perspectives}' > "$PERSPECTIVES_FILE" 2>/dev/null
+[ -s "$PERSPECTIVES_FILE" ] || echo '[]' > "$PERSPECTIVES_FILE"
+PATCH=$(python3 -c '
+import json
+with open("'"$PERSPECTIVES_FILE"'") as f:
+    perspectives = json.load(f)
+if not any(p.get("id") == "acm" for p in perspectives):
+    perspectives.append({"id": "acm", "visibility": {"state": "Disabled"}})
+print(json.dumps({"spec": {"customization": {"perspectives": perspectives}}}))
+')
+oc patch consoles.operator.openshift.io cluster --type=merge -p "$PATCH"
+
+# This also restarts the console deployment (observed as a single-stage
+# rollout, unlike oauth-openshift's multi-stage one) - wait it out the same
+# way before declaring it safe to log in.
+echo "Waiting for the Console to pick up the perspective change and stabilize..."
+if ! oc rollout status deployment/console -n openshift-console --timeout=300s; then
+  echo "ERROR: console did not finish rolling out within 300s."
+  echo "Do NOT log in as developer1 yet. Check 'oc get co console' and 'oc get pods -n openshift-console', then re-run this script once it settles."
+  exit 1
+fi
+
+echo "Console is ready - it is now safe to log in as developer1"
