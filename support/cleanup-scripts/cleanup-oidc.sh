@@ -61,7 +61,7 @@ oc adm policy remove-cluster-role-from-user lightspeed-operator-query-access dev
 # tab's browser tab. Instead, wait until the cluster has been fully quiet
 # for a sustained period, resetting the quiet timer every time
 # oauth-openshift restarts again.
-echo "Waiting for OAuth to fully stabilize - do NOT reload or log in to the OCP Console tab until this finishes."
+echo "Waiting for OAuth to fully stabilize - do NOT log out of or reload the OCP Console tab until this finishes."
 REQUIRED_STABLE_SECS=30
 MAX_WAIT_SECS=600
 STABLE_FOR=0
