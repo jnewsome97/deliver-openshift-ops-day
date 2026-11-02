@@ -141,6 +141,8 @@ Administrator login credentials:
 
 In the top-left corner of the console, you'll see a perspective switcher dropdown. Click the dropdown and select **Core Platform**.
 
+NOTE: The OpenShift Lightspeed window may open automatically when the console loads. If it's covering part of the screen, click **minimize** on it before continuing.
+
 === Step 3: Dashboard Overview
 
 Once in the Core Platform perspective, you'll see the **Overview** dashboard under **Home -> Overview**.
