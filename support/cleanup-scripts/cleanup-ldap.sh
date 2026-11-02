@@ -66,7 +66,7 @@ oc adm policy remove-cluster-role-from-group cluster-reader ose-fancy-dev 2>/dev
 # reach glauth while the rollout is in progress. Deleting glauth first (the
 # previous order) left a window where those still-running old pods got
 # connection failures against an already-deleted LDAP server.
-echo "Waiting for OAuth to fully stabilize before tearing down glauth - do NOT reload or log in to the OCP Console tab until this finishes."
+echo "Waiting for OAuth to fully stabilize before tearing down glauth - do NOT log out of or reload the OCP Console tab until this finishes."
 REQUIRED_STABLE_SECS=30
 MAX_WAIT_SECS=600
 STABLE_FOR=0
