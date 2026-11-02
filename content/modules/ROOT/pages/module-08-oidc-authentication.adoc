@@ -191,7 +191,7 @@ Verify the setup in the Keycloak UI - click **Users** and **Groups** to confirm 
 
 === Step 7: Configure OpenShift OAuth
 
-Applying this OAuth config change causes `oauth-openshift` to restart - and the authentication operator applies the change in several stages, so it's normal for `oauth-openshift` to restart *more than once in a row* over the next several minutes. If the **OCP Console** tab is logged in and watching the API while that happens, its connections start failing and retrying continuously, and on embedded/iframed Consoles (like the one in this Showroom) that retry storm can pin the browser tab's CPU and make it completely unresponsive.
+Applying this OAuth config change causes `oauth-openshift` to restart - and the authentication operator applies the change in several stages, so it's normal for `oauth-openshift` to restart *more than once in a row* over the next several minutes. If the **OCP Console** tab is logged in and watching the API while that happens, its connections start failing and retrying continuously, which can freeze the tab (see the warning below for why this is worse on this embedded Console).
 
 To avoid that, log out *before* making the change, so the Console tab is just sitting on the static login page - with no open API connections - while OAuth is cycling:
 
@@ -212,18 +212,20 @@ fi
 
 The key line is `claims.groups: [groups]` - this tells OpenShift to read the `groups` claim from the ID token and create OpenShift groups from it. This is why the script added the groups mapper to the OIDC client.
 
-The script above waits for the OAuth rollout to complete *and* to stay stable for 30 seconds before printing `OAuth is live with rhbk provider`. Don't reload the **OCP Console** tab until you see that message - keep reading below for why.
+The script above waits for the OAuth rollout to complete *and* to stay stable for 30 seconds before printing `OAuth is live with rhbk provider`. Don't touch the **OCP Console** tab until you see that message - keep reading below for why.
 
 [IMPORTANT]
 ====
-**Do not reload the OCP Console tab (or log back in) before the script prints "OAuth is live... has been stable..."**
+**Do not reload or log back into the embedded OCP Console tab at any point in this step - not before the script finishes, and not after.**
 
-Even logged out, reloading mid-rollout can hit a backend that's mid-restart and land you on an error page, and logging in again re-opens the authenticated watches that caused the freeze in the first place. The wait script protects you from this: it only declares victory once `oauth-openshift` has had no new restarts for a full 30 seconds. If you ever see repeated "oauth-openshift restarted again" lines, that's expected - just keep waiting.
+Even logged out, reloading mid-rollout can hit a backend that's mid-restart and land you on an error page, and logging back in re-opens the authenticated watches that caused the freeze in the first place. Because this embedded tab is iframed inside Showroom, that retry storm can pin its CPU and make it permanently unresponsive - a plain browser tab recovers from this, but the embedded one often doesn't.
+
+Instead, do the OIDC login test in a **separate, external browser tab**: {openshift_cluster_console_url}[window=blank]. Leave the embedded Console tab alone for the rest of this module.
 ====
 
 === Step 8: Test OIDC Login and Automatic Group Sync
 
-1. Click the **reload button** (circular arrow) next to the OCP Console tab name. You'll see both identity providers:
+1. Open the console in a separate browser tab: {openshift_cluster_console_url}[window=blank]. You'll see both identity providers:
 +
 image::oidc-login-selector.png[OpenShift login page showing htpasswd and rhbk, link=self, window=blank]
 +
@@ -235,7 +237,7 @@ image::oidc-login-selector.png[OpenShift login page showing htpasswd and rhbk, l
 You may see an **Authentication error** page:
 
 image::oidc-auth-error.png[Authentication error after OIDC login, link=self, window=blank]
-Click the **reload button** (circular arrow) next to the OCP Console tab to reload the page. If you see this and the OAuth script finished successfully, a single reload should resolve it - avoid repeatedly clicking reload, as rapid repeated reloads are part of what can make the Console tab unresponsive.
+Reload *this external tab* (not the embedded Console tab) to retry. If you see this and the OAuth script finished successfully, a single reload should resolve it - avoid repeatedly reloading, since rapid repeated reloads are part of what can make an embedded Console tab unresponsive.
 ====
 
 Now check what happened - when `developer1` logged in, their Keycloak group membership was included in the ID token. OpenShift reads the token and creates the groups automatically, no manual `oc adm groups sync` required. Back in the terminal:
@@ -292,11 +294,11 @@ oc adm policy add-role-to-group view ocp-developers -n app-production
 
 NOTE: You may see `Warning: Group 'ocp-admins' not found` or similar - this is normal. OIDC groups are only created in OpenShift when a user from that group logs in. Only `developer1` has logged in so far, so only `ocp-developers` exists. The role bindings are still created and will take effect when those users log in.
 
-Now verify - reload the **OCP Console** tab. Since developer1 is already logged in via OIDC, the console should now show the projects they have access to. You should see **Application Development** and **Application Production** in the project list.
+Now verify - reload the **external Console tab** you logged into as `developer1` in Step 8 (not the embedded one). The console should now show the projects they have access to. You should see **Application Development** and **Application Production** in the project list.
 
 Test permissions from the terminal using developer1's token:
 
-1. In the OCP Console (logged in as developer1), click your username (top-right) → **Copy login command** → click **rhbk** → **Display Token**
+1. In that external Console tab (logged in as developer1), click your username (top-right) → **Copy login command** → click **rhbk** → **Display Token**
 +
 image::oidc-copy-login-command.png[User menu showing Copy login command option, link=self, window=blank]
 +
@@ -345,9 +347,9 @@ In the **OCP Console** tab, log out of `developer1`.
 *Before moving on:* Please run the cleanup commands in this module. This cluster has limited resources - leaving workloads running can cause resource pressure that may affect your experience in later modules.
 ====
 
-As in Step 7, log out of the **OCP Console** tab before running the cleanup script below, to avoid freezing the tab while OAuth restarts:
+As in Step 7, log out of the **external Console tab** you've been using since Step 8 before running the cleanup script below, to avoid freezing it while OAuth restarts. (The embedded **OCP Console** tab should still be untouched on its login page from Step 7 - leave it that way.)
 
-1. In the **OCP Console** tab, click your username (top-right) and select **Log out**
+1. In that external Console tab, click your username (top-right) and select **Log out**
 
 [source,bash,subs="+attributes",role="execute"]
 ----
@@ -360,7 +362,7 @@ else
 fi
 ----
 
-**Do not reload the OCP Console tab (or log back in) before the script prints "Cleanup complete...".**
+**Do not reload either Console tab (or log back in) before the script prints "Cleanup complete...".**
 
 === Summary
 
