@@ -446,6 +446,120 @@
     - redhat-marketplace-catalog
   ignore_errors: true
 
+# ==============================================================================
+# Disable ACM default addons that can never run on this cluster
+#
+# This HCP cluster is control-plane-only (no NodePool, by design - see
+# ocp4_workload_create_hcp_cluster_name's comment in defaults/main.yml). ACM
+# auto-imports it and creates its standard addon bundle, even though none of
+# those addons have any node to schedule an agent pod on. ACM's own
+# addon-manager already reflects this: it labels the ManagedCluster
+# "feature.open-cluster-management.io/addon-<name>: unreachable" for every
+# one of these addons, and the compliance-operator policy installed for the
+# whole fleet (above, via the "global" ManagedClusterSet) is permanently
+# stuck Unknown/NonCompliant on this cluster for the same reason.
+#
+# Left in place, the hub's addon-manager and search-api/search-indexer keep
+# retrying these unreachable addons indefinitely. This has been observed to
+# cause periodic multi-minute OpenShift Console freezes on full page reload -
+# search-api's UserDataCache/PopulateSharedCache calls spike past 1s during
+# these retries, and every Console reload cold-loads the ACM/MCE console
+# plugin's cluster list through that same path.
+#
+# Five of the eight default addons (search-collector, application-manager,
+# cert-policy-controller, config-policy-controller, governance-policy-framework)
+# are driven by the per-cluster KlusterletAddonConfig that ACM's import
+# process auto-creates - that is the actual, supported place to turn them
+# off, confirmed live: deleting the ManagedClusterAddOn objects directly
+# instead just gets them silently recreated by this config within seconds.
+# The other three (work-manager, cluster-proxy, managed-serviceaccount) are
+# core/mandatory and have no per-cluster disable mechanism - they stay stuck
+# Unknown regardless, which is an accepted, unavoidable residual.
+#
+# Three of the five addons disabled here (application-manager,
+# config-policy-controller, governance-policy-framework) carry an
+# "addon-pre-delete" finalizer that waits for a cleanup job to run and report
+# back from inside the managed cluster before the ManagedClusterAddOn object
+# is actually removed. On a no-node cluster that job can never run, so once
+# disabled in KlusterletAddonConfig these get stuck permanently Terminating
+# instead of actually going away - confirmed live. There is nothing on this
+# cluster for that cleanup job to clean up, so force-clearing the finalizer
+# for these three specifically is safe.
+#
+# Removing these removes zero working functionality - none of them currently
+# do anything on this no-node cluster - and stops the retry churn. Wait for
+# ACM to finish auto-importing the ManagedCluster and creating the
+# KlusterletAddonConfig first, so this doesn't race the import.
+# ==============================================================================
+
+- name: Wait for ACM to auto-import the hosted cluster as a ManagedCluster
+  kubernetes.core.k8s_info:
+    api_version: cluster.open-cluster-management.io/v1
+    kind: ManagedCluster
+    name: "{{ ocp4_workload_create_hcp_cluster_name }}"
+  register: r_hcp_managed_cluster
+  retries: 30
+  delay: 10
+  until: r_hcp_managed_cluster.resources | default([]) | length > 0
+  ignore_errors: true
+
+- name: Wait for ACM to create the KlusterletAddonConfig for the hosted cluster
+  kubernetes.core.k8s_info:
+    api_version: agent.open-cluster-management.io/v1
+    kind: KlusterletAddonConfig
+    name: "{{ ocp4_workload_create_hcp_cluster_name }}"
+    namespace: "{{ ocp4_workload_create_hcp_cluster_name }}"
+  register: r_hcp_addon_config
+  retries: 18
+  delay: 10
+  until: r_hcp_addon_config.resources | default([]) | length > 0
+  when: r_hcp_managed_cluster.resources | default([]) | length > 0
+  ignore_errors: true
+
+- name: Disable the default addons that can never run on this no-node cluster
+  kubernetes.core.k8s:
+    state: patched
+    api_version: agent.open-cluster-management.io/v1
+    kind: KlusterletAddonConfig
+    name: "{{ ocp4_workload_create_hcp_cluster_name }}"
+    namespace: "{{ ocp4_workload_create_hcp_cluster_name }}"
+    definition:
+      spec:
+        applicationManager:
+          enabled: false
+        certPolicyController:
+          enabled: false
+        iamPolicyController:
+          enabled: false
+        policyController:
+          enabled: false
+        searchCollector:
+          enabled: false
+  when: r_hcp_addon_config.resources | default([]) | length > 0
+  ignore_errors: true
+
+- name: Wait for the disabled addons to start terminating
+  pause:
+    seconds: 15
+  when: r_hcp_addon_config.resources | default([]) | length > 0
+
+- name: Force-clear the addon-pre-delete finalizer on addons stuck Terminating with no cluster to clean up
+  kubernetes.core.k8s:
+    state: patched
+    api_version: addon.open-cluster-management.io/v1alpha1
+    kind: ManagedClusterAddOn
+    name: "{{ item }}"
+    namespace: "{{ ocp4_workload_create_hcp_cluster_name }}"
+    definition:
+      metadata:
+        finalizers: []
+  loop:
+    - application-manager
+    - config-policy-controller
+    - governance-policy-framework
+  when: r_hcp_addon_config.resources | default([]) | length > 0
+  ignore_errors: true
+
 - name: Extract hosted cluster API URL from kubeconfig
   set_fact:
     _hcp_api_url: "{{ r_hcp_kubeconfig.resources[0].data.kubeconfig | b64decode | from_yaml | json_query('clusters[0].cluster.server') }}"
