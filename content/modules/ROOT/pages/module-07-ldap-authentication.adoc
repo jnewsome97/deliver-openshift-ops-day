@@ -145,11 +145,11 @@ The script above already waits for the OAuth rollout to complete *and* to stay s
 
 [IMPORTANT]
 ====
-**Do not log out of or reload the OCP Console tab before the script prints "...has been stable..."**
+**Do not log in to or reload the OCP Console tab until the script prints "...has been stable..."**
 
-Applying this OAuth config change causes `oauth-openshift` to restart - and the authentication operator applies the change in several stages, so it's normal for `oauth-openshift` to restart *more than once in a row* over the next several minutes. If you log out or reload the Console while a restart is still in progress, the Console's open connections to the API server start failing and retrying continuously. On embedded/iframed Consoles (like the one in this Showroom), that retry storm can pin the browser tab's CPU and make the Console tab completely unresponsive, requiring you to close and reopen the tab.
+`oauth-openshift` restarts multiple times over the next few minutes as this change rolls out. Logging in or reloading mid-restart leaves the Console's API connections failing and retrying continuously, which can pin the embedded tab's CPU and make it unresponsive, requiring you to close and reopen it.
 
-The wait script is written to protect you from this: it only declares victory once `oauth-openshift` has had no new restarts for a full 30 seconds. If you ever see repeated "oauth-openshift restarted again" lines, that's expected - just keep waiting.
+The wait script already accounts for this - it only finishes once `oauth-openshift` has been stable for 30 seconds. Repeated "oauth-openshift restarted again" lines are expected; just keep waiting.
 ====
 
 The OAuth pods need a few moments after rollout to fully initialize their LDAP connections. This checks that LDAP login actually works before moving on:
