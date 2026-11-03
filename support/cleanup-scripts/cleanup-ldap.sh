@@ -112,4 +112,39 @@ echo "Deleting test projects and the glauth LDAP server - this can take a minute
 oc delete project app-dev app-test app-prod glauth --ignore-not-found --timeout=180s \
   || echo "WARNING: project deletion did not finish within 180s - it will keep terminating in the background, this is not a safety concern on its own"
 
+# "oc get co authentication" only reports the state of the oauth-openshift
+# Deployment itself - it says nothing about whether the public oauth and
+# console routes (which is what a real login/reload actually hits) have
+# caught up. Measured live: the operator can report fully stable while the
+# oauth route still returns brief connection failures for several more
+# seconds - exactly the window a login racing this script's "safe" message
+# would land in and freeze. Confirm the real routes are reachable too before
+# telling the attendee it's safe to log back in.
+wait_for_route_reachable() {
+  local url="$1" label="$2"
+  local required_ok=10 max_wait=120 ok_streak=0 elapsed=0
+  while :; do
+    local code
+    code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 3 "$url" 2>/dev/null || echo "000")
+    if [ "$code" = "200" ] || [ "$code" = "403" ]; then
+      ok_streak=$((ok_streak+1))
+    else
+      [ "$ok_streak" -gt 0 ] && echo "  $label returned $code - resetting reachability streak"
+      ok_streak=0
+    fi
+    [ "$ok_streak" -ge "$required_ok" ] && return 0
+    sleep 1; elapsed=$((elapsed+1))
+    if [ "$elapsed" -ge "$max_wait" ]; then
+      echo "WARNING: $label did not stay reachable for ${required_ok}s straight within ${max_wait}s - continuing anyway, but logging back in right now may still hit a transient failure"
+      return 1
+    fi
+  done
+}
+
+OAUTH_HOST=$(oc get route oauth-openshift -n openshift-authentication -o jsonpath='{.spec.host}' 2>/dev/null)
+CONSOLE_HOST=$(oc get route console -n openshift-console -o jsonpath='{.spec.host}' 2>/dev/null)
+echo "Confirming the oauth and console routes are actually reachable before declaring it safe to log back in..."
+[ -n "$OAUTH_HOST" ] && wait_for_route_reachable "https://${OAUTH_HOST}/healthz" "oauth route"
+[ -n "$CONSOLE_HOST" ] && wait_for_route_reachable "https://${CONSOLE_HOST}/" "console route"
+
 echo "Cleanup complete - it is now safe to continue to the next module"
