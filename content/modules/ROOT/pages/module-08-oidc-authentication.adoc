@@ -221,6 +221,8 @@ The script above waits for the OAuth rollout to complete *and* to stay stable fo
 Even logged out, reloading mid-rollout can hit a backend that's mid-restart and land you on an error page, and logging back in re-opens the authenticated watches that caused the freeze in the first place. Because this embedded tab is iframed inside Showroom, that retry storm can pin its CPU and make it permanently unresponsive - a plain browser tab recovers from this, but the embedded one often doesn't.
 
 Instead, do the OIDC login test in a **separate, external browser tab**: {openshift_cluster_console_url}[window=blank]. Leave the embedded Console tab alone for the rest of this module.
+
+If you have issues with that tab freezing too, please open the link in an incognito/private window instead.
 ====
 
 === Step 8: Test OIDC Login and Automatic Group Sync

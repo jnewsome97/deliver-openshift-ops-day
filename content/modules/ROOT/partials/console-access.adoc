@@ -6,4 +6,6 @@
 * *Console:* {openshift_cluster_console_url}[window=blank]
 
 TIP: We recommend using the **OCP Console** tab within this Showroom interface as it is easier to follow along.
+
+NOTE: If the OpenShift Console tab or window freezes, please open the link above in an incognito/private window instead.
 ====

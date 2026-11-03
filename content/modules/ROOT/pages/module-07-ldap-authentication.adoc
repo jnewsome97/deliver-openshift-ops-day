@@ -92,6 +92,8 @@ oc create secret generic ldap-secret \
   -n openshift-config
 ----
 
+Log out of the OpenShift Console.
+
 **Extract the CA certificate from the LDAP server:**
 
 [source,bash,role="execute"]
@@ -150,6 +152,8 @@ The script above already waits for the OAuth rollout to complete *and* to stay s
 `oauth-openshift` restarts multiple times over the next few minutes as this change rolls out. Logging in or reloading mid-restart leaves the Console's API connections failing and retrying continuously, which can pin the embedded tab's CPU and make it unresponsive, requiring you to close and reopen it.
 
 The wait script already accounts for this - it only finishes once `oauth-openshift` has been stable for 30 seconds. Repeated "oauth-openshift restarted again" lines are expected; just keep waiting.
+
+If you have issues with the Console tab freezing, please open the link in an incognito/private window instead.
 ====
 
 The OAuth pods need a few moments after rollout to fully initialize their LDAP connections. This checks that LDAP login actually works before moving on:
@@ -177,6 +181,8 @@ In the **OCP Console** tab, click your username (top-right) and select **Log out
 
 image::ldap-login-selector.png[OpenShift login page showing htpasswd and ldap identity providers, link=self, window=blank]
 NOTE: We won't be logging into the console as the LDAP users in this workshop. Please log back in using **htpasswd** so you can continue investigating as admin.
+
+NOTE: If you have issues with the Console tab freezing, please open the link in an incognito/private window instead.
 
 [cols="1,1"]
 |===
