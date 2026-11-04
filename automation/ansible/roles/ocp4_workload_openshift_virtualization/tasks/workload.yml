@@ -68,15 +68,18 @@
       # cluster-wide pod churn a MachineConfigPool rollout causes on a compact
       # cluster where masters double as workers - the service has zero
       # endpoints and the API server returns a 500, which is otherwise fatal
-      # here. Confirmed live that this self-heals within seconds once the
-      # webhook pod comes back, so retry instead of failing immediately.
+      # here. This usually self-heals within seconds, but when the operator's
+      # own CSV install lands right after a full master-pool reboot rollout,
+      # recovery can take much longer - confirmed live on cluster-sb4fr where
+      # HyperConverged didn't reach Available until ~34 minutes after creation.
+      # Retry budgets below are sized with headroom over that.
       - name: Create the HyperConverged instance
         kubernetes.core.k8s:
           state: present
           definition: "{{ lookup('template', 'hyperconverged.yaml.j2') }}"
         register: _ocp4_workload_openshift_virtualization_hco_create
         until: _ocp4_workload_openshift_virtualization_hco_create is succeeded
-        retries: 10
+        retries: 40
         delay: 15
 
       - name: Wait until HyperConverged is installed
@@ -94,7 +97,7 @@
             status: "True"
         register: _ocp4_workload_openshift_virtualization_hco_wait
         until: _ocp4_workload_openshift_virtualization_hco_wait is succeeded
-        retries: 5
+        retries: 160
         delay: 15
 
       # For deployments on CNV with external Ceph use PVCs for boot image snapshots
