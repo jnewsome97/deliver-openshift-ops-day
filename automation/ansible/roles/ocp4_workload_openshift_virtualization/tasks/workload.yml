@@ -63,10 +63,21 @@
     - name: Deploy and configure HyperConverged
       when: ocp4_workload_openshift_virtualization_deploy_hyperconverged | bool
       block:
+      # The hco.kubevirt.io CRD has a conversion webhook (hco-webhook-service).
+      # If that pod isn't Ready when this request lands - e.g. during the
+      # cluster-wide pod churn a MachineConfigPool rollout causes on a compact
+      # cluster where masters double as workers - the service has zero
+      # endpoints and the API server returns a 500, which is otherwise fatal
+      # here. Confirmed live that this self-heals within seconds once the
+      # webhook pod comes back, so retry instead of failing immediately.
       - name: Create the HyperConverged instance
         kubernetes.core.k8s:
           state: present
           definition: "{{ lookup('template', 'hyperconverged.yaml.j2') }}"
+        register: _ocp4_workload_openshift_virtualization_hco_create
+        until: _ocp4_workload_openshift_virtualization_hco_create is succeeded
+        retries: 10
+        delay: 15
 
       - name: Wait until HyperConverged is installed
         kubernetes.core.k8s_info:
@@ -81,6 +92,10 @@
             reason: "ReconcileCompleted"
             type: "Available"
             status: "True"
+        register: _ocp4_workload_openshift_virtualization_hco_wait
+        until: _ocp4_workload_openshift_virtualization_hco_wait is succeeded
+        retries: 5
+        delay: 15
 
       # For deployments on CNV with external Ceph use PVCs for boot image snapshots
       # HyperConverged must have been created with .spec.featureGates.enableCommonBootImageImport: false
