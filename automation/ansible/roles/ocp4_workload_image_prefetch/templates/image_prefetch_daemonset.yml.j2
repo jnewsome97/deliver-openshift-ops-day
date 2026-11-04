@@ -22,6 +22,7 @@ spec:
       - name: prefetch-{{ loop.index }}
         image: "{{ image }}"
         imagePullPolicy: IfNotPresent
+        command: ["sleep", "infinity"]
         resources:
           requests:
             cpu: 5m

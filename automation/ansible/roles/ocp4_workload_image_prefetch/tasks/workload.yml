@@ -21,14 +21,19 @@
   ignore_errors: true
   when: ocp4_workload_image_prefetch_images | length > 0
 
-# The prefetch DaemonSet's containers run the real workload images with no
-# config/args, so they crash-loop as soon as they start - numberReady can
-# never reach desiredNumberScheduled even after every image has finished
-# pulling (confirmed live: all 3 images pulled in under 9 minutes, but every
-# container then sat in CrashLoopBackOff for the rest of the 20-minute wait
-# budget). containerStatuses[].imageID is populated as soon as the image is
-# pulled, independent of whether the container then crashes, so it's used
-# here instead of pod/DaemonSet readiness.
+# The prefetch DaemonSet's containers only need to pull the real workload
+# images, not run them, so the template overrides each container's command to
+# `sleep infinity`. containerStatuses[].imageID is populated as soon as the
+# image is pulled, independent of container readiness, so it's used here
+# instead of pod/DaemonSet readiness (which would otherwise require the sleep
+# process to pass a readiness probe that was never configured).
+#
+# Previously these containers ran each image's real entrypoint with no
+# config, which OOMKilled against the 20Mi memory limit and crash-looped for
+# the rest of the wait budget. That churn was assumed harmless, but on a
+# compact cluster it can starve an unrelated pod scheduled on the same node -
+# confirmed live: this starved openshift-cnv's virt-operator deployment hard
+# enough to fail its CSV install.
 - name: Wait for image prefetch DaemonSet to finish pulling its images on every node
   kubernetes.core.k8s_info:
     api_version: v1
