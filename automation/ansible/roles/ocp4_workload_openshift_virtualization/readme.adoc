@@ -1,3 +1,54 @@
 = ocp4_workload_openshift_virtualization - Deploy OpenShift Virtualization to an OpenShift Cluster
 
 See defaults/main.yml for variables to set.
+
+== HyperConverged readiness
+
+The role retries HyperConverged API queries through temporary conversion-webhook
+or API outages, such as those caused by node reboots during a MachineConfig rollout.
+Readiness requires `Available=True`, `Progressing=False`, and `Degraded=False`.
+Missing resources or conditions do not count as ready. Persistent errors or an
+unhealthy HyperConverged instance fail the task when its retry budget is exhausted.
+
+* `ocp4_workload_openshift_virtualization_hco_wait_retries`: `240`
+* `ocp4_workload_openshift_virtualization_hco_wait_delay`: `10` seconds
+
+The default readiness retry budget is approximately 40 minutes, plus API request
+duration, preserving the longer recovery allowance from the main branch. HCO
+creation also retains its separate 40-retry, 15-second-delay budget.
+This role does not apply MachineConfigs or sequence external MachineConfig changes;
+callers managing such changes should wait for their rollout where appropriate.
+
+== Resilient virtctl download
+
+The role waits for a Linux link in ConsoleCLIDownload before downloading.
+It retries the cluster-hosted ingress route from the bastion, then falls back to
+the Kubernetes API service proxy if the route or its archive remains unavailable.
+The fallback resolves the actual route backend and service port and requests the
+same cluster-provided archive, not a potentially incompatible upstream release.
+It requires `openshift_api_url`, `openshift_api_key`, and permission to get
+`services/proxy`. API credentials are suppressed from logs and are not forwarded
+on redirects. Both paths validate that the gzip archive contains `virtctl` before
+installation. Persistent failures still fail provisioning.
+
+* `ocp4_workload_openshift_virtualization_virtctl_download_retries`: `20`
+* `ocp4_workload_openshift_virtualization_virtctl_download_delay`: `10` seconds
+* `ocp4_workload_openshift_virtualization_virtctl_download_timeout`: `30` seconds per request
+* `ocp4_workload_openshift_virtualization_virtctl_validate_certs`: `false`, preserving
+  existing private-CA workshop behavior; set `true` when the bastion trusts the
+  API and ingress certificates.
+
+Retries apply separately to discovery, backend lookup, and each download path;
+they are not a single overall timeout. The API path bypasses ingress but still
+requires a working API server and download-service backend.
+
+== Offline regression tests
+
+Install `ansible-core` and `PyYAML`, then run from the repository root:
+
+----
+python -m unittest discover -s tests/unit -p "test_*.py" -v
+----
+
+The tests replace network operations with local stubs and execute the production
+retry/fallback logic and archive checks without accessing a cluster.

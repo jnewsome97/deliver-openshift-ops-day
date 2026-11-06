@@ -88,17 +88,27 @@
           kind: HyperConverged
           name: kubevirt-hyperconverged
           namespace: openshift-cnv
-          wait: true
-          wait_sleep: 10
-          wait_timeout: 1200
-          wait_condition:
-            reason: "ReconcileCompleted"
-            type: "Available"
-            status: "True"
-        register: _ocp4_workload_openshift_virtualization_hco_wait
-        until: _ocp4_workload_openshift_virtualization_hco_wait is succeeded
-        retries: 160
-        delay: 15
+        # Retry the API request itself: the module's internal wait exits on webhook
+        # conversion errors, which can occur while operator nodes are rebooting.
+        register: r_openshift_virtualization_hco
+        vars:
+          _hco_conditions: >-
+            {{ (r_openshift_virtualization_hco.resources | default([])
+                | first | default({})).get('status', {}).get('conditions', []) }}
+        until:
+        - r_openshift_virtualization_hco is succeeded
+        - r_openshift_virtualization_hco.resources | default([]) | length == 1
+        - >-
+          _hco_conditions | selectattr('type', 'equalto', 'Available')
+          | map(attribute='status') | list == ['True']
+        - >-
+          _hco_conditions | selectattr('type', 'equalto', 'Progressing')
+          | map(attribute='status') | list == ['False']
+        - >-
+          _hco_conditions | selectattr('type', 'equalto', 'Degraded')
+          | map(attribute='status') | list == ['False']
+        retries: "{{ ocp4_workload_openshift_virtualization_hco_wait_retries }}"
+        delay: "{{ ocp4_workload_openshift_virtualization_hco_wait_delay }}"
 
       # For deployments on CNV with external Ceph use PVCs for boot image snapshots
       # HyperConverged must have been created with .spec.featureGates.enableCommonBootImageImport: false
@@ -179,31 +189,27 @@
             kind: ConsoleCLIDownload
             name: virtctl-clidownloads-kubevirt-hyperconverged
           register: r_virtctl_cli_download
-          retries: 20
-          delay: 10
-          ignore_errors: true
+          vars:
+            _virtctl_linux_links: >-
+              {{ (r_virtctl_cli_download.resources | default([])
+                  | first | default({})).get('spec', {}).get('links', [])
+                 | selectattr('href', 'defined') | map(attribute='href')
+                 | select('search', '/linux/') | list }}
+          retries: "{{ ocp4_workload_openshift_virtualization_virtctl_download_retries }}"
+          delay: "{{ ocp4_workload_openshift_virtualization_virtctl_download_delay }}"
           until:
-          - r_virtctl_cli_download.resources is defined
-          - r_virtctl_cli_download.resources | length > 0
+          - r_virtctl_cli_download is succeeded
+          - _virtctl_linux_links | length > 0
 
         - name: Get virtctl download URL from ConsoleCLIDownload
-          when: r_virtctl_cli_download.resources | length > 0
           ansible.builtin.set_fact:
             _ocp4_workload_openshift_virtualization_virtctl_url: >-
-              {{ r_virtctl_cli_download.resources[0] | to_json | from_json
-              | json_query("spec.links[?contains(href,'linux')].href") | first }}
+              {{ r_virtctl_cli_download.resources[0].spec.links
+                 | selectattr('href', 'defined') | map(attribute='href')
+                 | select('search', '/linux/') | first }}
 
-        - name: Download virtctl cli tool
-          delegate_to: "{{ groups['bastions'][0] }}"
-          ansible.builtin.get_url:
-            url: "{{ _ocp4_workload_openshift_virtualization_virtctl_url }}"
-            validate_certs: false
-            dest: /tmp/virtctl.tar.gz
-            mode: "0660"
-          register: r_virtctl
-          until: r_virtctl is success
-          retries: 20
-          delay: 10
+        - name: Download virtctl with an API proxy fallback
+          ansible.builtin.include_tasks: download_virtctl.yml
 
         - name: Install virtctl CLI on bastion
           # Must delegate to the actual bastion VM (like install_hcp_cli.yaml

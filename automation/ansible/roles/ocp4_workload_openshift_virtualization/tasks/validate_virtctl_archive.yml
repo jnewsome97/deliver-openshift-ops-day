@@ -1,0 +1,16 @@
+---
+- name: Check that the virtctl download is a readable gzip archive
+  delegate_to: "{{ groups['bastions'][0] }}"
+  ansible.builtin.command:
+    argv:
+    - tar
+    - -tzf
+    - /tmp/virtctl.tar.gz
+  register: r_virtctl_archive
+  changed_when: false
+
+- name: Check that the archive contains virtctl
+  ansible.builtin.assert:
+    that:
+    - r_virtctl_archive.stdout_lines | select('match', '^(\./)?virtctl$') | list | length == 1
+    fail_msg: "The downloaded archive does not contain the expected virtctl executable."

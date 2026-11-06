@@ -1,0 +1,104 @@
+---
+- name: Try the cluster-hosted virtctl route
+  block:
+  - name: Download virtctl cli tool
+    delegate_to: "{{ groups['bastions'][0] }}"
+    ansible.builtin.get_url:
+      url: "{{ _ocp4_workload_openshift_virtualization_virtctl_url }}"
+      validate_certs: "{{ ocp4_workload_openshift_virtualization_virtctl_validate_certs }}"
+      dest: /tmp/virtctl.tar.gz
+      mode: "0660"
+      force: true
+      timeout: "{{ ocp4_workload_openshift_virtualization_virtctl_download_timeout }}"
+    register: r_virtctl
+    until: r_virtctl is succeeded
+    retries: "{{ ocp4_workload_openshift_virtualization_virtctl_download_retries }}"
+    delay: "{{ ocp4_workload_openshift_virtualization_virtctl_download_delay }}"
+
+  - name: Validate the route-provided virtctl archive
+    ansible.builtin.include_tasks: validate_virtctl_archive.yml
+
+  rescue:
+  - name: Explain the virtctl download fallback
+    ansible.builtin.debug:
+      msg: "The virtctl route or archive is unavailable; trying the same archive through the Kubernetes API service proxy."
+
+  - name: Require API credentials for the virtctl fallback
+    ansible.builtin.assert:
+      that:
+      - openshift_api_url | default('') | length > 0
+      - openshift_api_key | default('') | length > 0
+      quiet: true
+      fail_msg: "The virtctl API fallback requires openshift_api_url and openshift_api_key."
+    no_log: true
+
+  - name: Find the virtctl route backend
+    kubernetes.core.k8s_info:
+      api_version: route.openshift.io/v1
+      kind: Route
+      name: "{{ (_ocp4_workload_openshift_virtualization_virtctl_url | urlsplit('hostname')).split('.')[0] }}"
+      namespace: openshift-cnv
+    register: r_virtctl_route
+    until:
+    - r_virtctl_route is succeeded
+    - r_virtctl_route.resources | default([]) | length == 1
+    retries: "{{ ocp4_workload_openshift_virtualization_virtctl_download_retries }}"
+    delay: "{{ ocp4_workload_openshift_virtualization_virtctl_download_delay }}"
+
+  - name: Find the virtctl download service
+    kubernetes.core.k8s_info:
+      api_version: v1
+      kind: Service
+      name: "{{ r_virtctl_route.resources[0].spec.to.name }}"
+      namespace: openshift-cnv
+    register: r_virtctl_service
+    until:
+    - r_virtctl_service is succeeded
+    - r_virtctl_service.resources | default([]) | length == 1
+    retries: "{{ ocp4_workload_openshift_virtualization_virtctl_download_retries }}"
+    delay: "{{ ocp4_workload_openshift_virtualization_virtctl_download_delay }}"
+
+  # A Route targetPort names a Service targetPort (or port name), not
+  # necessarily its exposed port number. Resolve it before building the proxy URL.
+  - name: Resolve the route service port
+    ansible.builtin.set_fact:
+      _virtctl_service_ports: >-
+        {{ (r_virtctl_service.resources[0].spec.ports
+            | selectattr('name', 'defined')
+            | selectattr('name', 'equalto', r_virtctl_route.resources[0].spec.port.targetPort)
+            | list)
+           + (r_virtctl_service.resources[0].spec.ports
+              | selectattr('targetPort', 'defined')
+              | selectattr('targetPort', 'equalto', r_virtctl_route.resources[0].spec.port.targetPort)
+              | list) }}
+
+  - name: Require an unambiguous virtctl service port
+    ansible.builtin.assert:
+      that:
+      - _virtctl_service_ports | map(attribute='port') | unique | list | length == 1
+      fail_msg: "Could not resolve the virtctl route target to a unique service port."
+
+  - name: Download virtctl through the Kubernetes API service proxy
+    delegate_to: "{{ groups['bastions'][0] }}"
+    ansible.builtin.get_url:
+      url: >-
+        {{ openshift_api_url | regex_replace('/+$', '') }}/api/v1/namespaces/openshift-cnv/services/http:{{
+        r_virtctl_service.resources[0].metadata.name }}:{{ _virtctl_service_ports[0].port }}/proxy{{
+        _ocp4_workload_openshift_virtualization_virtctl_url | urlsplit('path') }}
+      headers:
+        Authorization: "Bearer {{ openshift_api_key }}"
+      unredirected_headers:
+      - Authorization
+      validate_certs: "{{ ocp4_workload_openshift_virtualization_virtctl_validate_certs }}"
+      dest: /tmp/virtctl.tar.gz
+      mode: "0660"
+      force: true
+      timeout: "{{ ocp4_workload_openshift_virtualization_virtctl_download_timeout }}"
+    register: r_virtctl_api_download
+    until: r_virtctl_api_download is succeeded
+    retries: "{{ ocp4_workload_openshift_virtualization_virtctl_download_retries }}"
+    delay: "{{ ocp4_workload_openshift_virtualization_virtctl_download_delay }}"
+    no_log: true
+
+  - name: Validate the API-provided virtctl archive
+    ansible.builtin.include_tasks: validate_virtctl_archive.yml
