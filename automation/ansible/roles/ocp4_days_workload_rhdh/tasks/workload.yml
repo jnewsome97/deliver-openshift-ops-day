@@ -381,6 +381,27 @@
           K8S_PLUGIN_SA_TOKEN: "{{ r_sa_token_secret.stdout }}"
 
   # --- Dynamic plugins ---
+  - name: Build dynamic plugins list
+    set_fact:
+      _ocp4_days_workload_rhdh_dynamic_plugins:
+        - package: ./dynamic-plugins/dist/backstage-plugin-kubernetes-backend-dynamic
+          disabled: false
+        - package: ./dynamic-plugins/dist/backstage-plugin-kubernetes
+          disabled: false
+        - package: ./dynamic-plugins/dist/backstage-community-plugin-topology
+          disabled: false
+        - package: ./dynamic-plugins/dist/backstage-community-plugin-scaffolder-backend-module-kubernetes-dynamic
+          disabled: false
+        - package: ./dynamic-plugins/dist/roadiehq-scaffolder-backend-module-http-request-dynamic
+          disabled: false
+        - package: ./dynamic-plugins/dist/red-hat-developer-hub-backstage-plugin-quickstart
+          disabled: true
+
+  - name: Require the guest auth backend plugin when guest auth is enabled
+    set_fact:
+      _ocp4_days_workload_rhdh_dynamic_plugins: "{{ _ocp4_days_workload_rhdh_dynamic_plugins + [ocp4_days_workload_rhdh_guest_auth_plugin] }}"
+    when: ocp4_days_workload_rhdh_enable_guest_auth | bool
+
   - name: Create dynamic plugins ConfigMap
     kubernetes.core.k8s:
       state: present
@@ -391,22 +412,11 @@
           name: dynamic-plugins-rhdh
           namespace: "{{ ocp4_days_workload_rhdh_instance_namespace }}"
         data:
-          dynamic-plugins.yaml: |
-            includes:
-              - dynamic-plugins.default.yaml
-            plugins:
-              - package: ./dynamic-plugins/dist/backstage-plugin-kubernetes-backend-dynamic
-                disabled: false
-              - package: ./dynamic-plugins/dist/backstage-plugin-kubernetes
-                disabled: false
-              - package: ./dynamic-plugins/dist/backstage-community-plugin-topology
-                disabled: false
-              - package: ./dynamic-plugins/dist/backstage-community-plugin-scaffolder-backend-module-kubernetes-dynamic
-                disabled: false
-              - package: ./dynamic-plugins/dist/roadiehq-scaffolder-backend-module-http-request-dynamic
-                disabled: false
-              - package: ./dynamic-plugins/dist/red-hat-developer-hub-backstage-plugin-quickstart
-                disabled: true
+          dynamic-plugins.yaml: >-
+            {{ {'includes': ['dynamic-plugins.default.yaml'],
+                'plugins': _ocp4_days_workload_rhdh_dynamic_plugins
+                  + (ocp4_days_workload_rhdh_extra_dynamic_plugins | default([]))}
+               | to_nice_yaml(indent=2) }}
 
   # --- Catalog + template ---
   - name: Set cluster URLs

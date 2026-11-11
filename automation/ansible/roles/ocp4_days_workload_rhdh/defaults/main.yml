@@ -30,5 +30,16 @@ ocp4_days_workload_rhdh_deployment_wait_retries: 60
 # Enable guest authentication (required for workshop)
 ocp4_days_workload_rhdh_enable_guest_auth: true
 
+# RHDH no longer bundles auth provider plugins by default (as of 2.1); this
+# backend plugin is required alongside auth.providers.guest for guest sign-in
+# to work. Added automatically to dynamic-plugins-rhdh when guest auth is enabled.
+ocp4_days_workload_rhdh_guest_auth_plugin:
+  package: oci://quay.io/rhdh/backstage-plugin-auth-backend-module-guest-provider@sha256:550b73577df28add47ee9cdf45c38224c868bb7304587a68467bb98aace40fe4
+  disabled: false
+
+# Additional dynamic plugins to install alongside the built-in set, e.g. other
+# auth providers or workshop-specific plugins.
+ocp4_days_workload_rhdh_extra_dynamic_plugins: []
+
 # Populate RHDH with teams, workloads, plugins, catalog, and template
 ocp4_days_workload_rhdh_setup_workshop: true
