@@ -22,7 +22,7 @@ oc get csv -n openshift-cnv | grep kubevirt
 
 Expected output shows `Succeeded`:
 ----
-kubevirt-hyperconverged-operator.v4.x.x   OpenShift Virtualization   4.x.x   Succeeded
+kubevirt-hyperconverged-operator.v5.0.0   OpenShift Virtualization   5.0.0   Succeeded
 ----
 
 == Create & Explore a VM

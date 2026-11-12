@@ -8,7 +8,71 @@ set -uo pipefail
 
 echo "Cleaning up OIDC resources..."
 
+_set_acm_mce_console_enabled() {
+  local target="$1" verb
+  [ "$target" = "true" ] && verb="Re-enabling" || verb="Disabling"
+  echo "${verb} ACM/MCE console plugins..."
+  if oc get multiclusterhub multiclusterhub -n open-cluster-management &>/dev/null 2>&1; then
+    local patch
+    patch=$(oc get multiclusterhub multiclusterhub -n open-cluster-management -o json | python3 -c "
+import json, sys
+enabled = '$target' == 'true'
+mch = json.load(sys.stdin)
+for c in mch['spec']['overrides']['components']:
+    if c['name'] == 'console':
+        c['enabled'] = enabled
+print(json.dumps({'spec': {'overrides': {'components': mch['spec']['overrides']['components']}}}))
+")
+    oc patch multiclusterhub multiclusterhub -n open-cluster-management --type=merge -p "$patch"
+  fi
+  if oc get multiclusterengine multiclusterengine &>/dev/null 2>&1; then
+    local patch
+    patch=$(oc get multiclusterengine multiclusterengine -o json | python3 -c "
+import json, sys
+enabled = '$target' == 'true'
+mce = json.load(sys.stdin)
+for c in mce['spec']['overrides']['components']:
+    if c['name'] == 'console-mce':
+        c['enabled'] = enabled
+print(json.dumps({'spec': {'overrides': {'components': mce['spec']['overrides']['components']}}}))
+")
+    oc patch multiclusterengine multiclusterengine --type=merge -p "$patch"
+  fi
+}
+
+_wait_for_console_stable() {
+  local REQUIRED_STABLE_SECS=30 MAX_WAIT_SECS=300 STABLE_FOR=0 TOTAL_ELAPSED=0 LAST_GEN
+  LAST_GEN=$(oc get deployment console -n openshift-console -o jsonpath='{.metadata.generation}' 2>/dev/null || echo "")
+  while :; do
+    local CUR_GEN OBS_GEN READY UPDATED REPLICAS
+    CUR_GEN=$(oc get deployment console -n openshift-console -o jsonpath='{.metadata.generation}' 2>/dev/null || echo "")
+    OBS_GEN=$(oc get deployment console -n openshift-console -o jsonpath='{.status.observedGeneration}' 2>/dev/null || echo "")
+    READY=$(oc get deployment console -n openshift-console -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+    UPDATED=$(oc get deployment console -n openshift-console -o jsonpath='{.status.updatedReplicas}' 2>/dev/null || echo "0")
+    REPLICAS=$(oc get deployment console -n openshift-console -o jsonpath='{.status.replicas}' 2>/dev/null || echo "0")
+    if [ -n "$CUR_GEN" ] && [ "$CUR_GEN" = "$OBS_GEN" ] \
+       && [ "${READY:-0}" = "${REPLICAS:-0}" ] && [ "${UPDATED:-0}" = "${REPLICAS:-0}" ] \
+       && [ "${REPLICAS:-0}" -gt 0 ] && [ "$CUR_GEN" = "$LAST_GEN" ]; then
+      STABLE_FOR=$((STABLE_FOR+5))
+    else
+      if [ -n "$LAST_GEN" ] && [ -n "$CUR_GEN" ] && [ "$CUR_GEN" != "$LAST_GEN" ]; then
+        echo "  console restarted (generation $LAST_GEN -> $CUR_GEN) - resetting stability timer"
+      fi
+      STABLE_FOR=0
+    fi
+    LAST_GEN="$CUR_GEN"
+    [ "$STABLE_FOR" -ge "$REQUIRED_STABLE_SECS" ] && break
+    sleep 5; TOTAL_ELAPSED=$((TOTAL_ELAPSED+5))
+    if [ "$TOTAL_ELAPSED" -ge "$MAX_WAIT_SECS" ]; then
+      echo "WARNING: Timed out after ${MAX_WAIT_SECS}s waiting for console to stabilize"
+      break
+    fi
+  done
+}
+
 GEN=$(oc get deployment oauth-openshift -n openshift-authentication -o jsonpath='{.metadata.generation}' 2>/dev/null || echo "")
+
+_set_acm_mce_console_enabled false
 
 # Restore OAuth to htpasswd only
 cat <<'EOF' | oc apply -f -
@@ -76,6 +140,12 @@ while :; do
   [ "$GEN_AFTER" = "$GEN_NOW" ] && break
   echo "  oauth-openshift restarted again (generation $GEN_AFTER -> $GEN_NOW) - this is expected, waiting for it to finish too"
 done
+
+echo "Waiting for the console to settle after OAuth-triggered restarts..."
+_wait_for_console_stable
+_set_acm_mce_console_enabled true
+echo "Waiting for the console to stabilize after restoring ACM/MCE plugins..."
+_wait_for_console_stable
 
 # Deliberately NOT deleting the rhbk-client-secret, the rhbk namespace
 # (Keycloak), or the app-development/app-production projects here. On a
