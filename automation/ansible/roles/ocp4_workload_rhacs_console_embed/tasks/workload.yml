@@ -193,6 +193,11 @@
                   key: "{{ r_ingress_cert_secret.resources[0].data['tls.key'] | b64decode }}"
                   destinationCACertificate: "{{ _rhacs_combined_destination_ca }}"
 
+# Old budget (12 x 5s = 60s) assumed the operator would reconcile the CR
+# patch into an admitted Route well within that window. Confirmed on
+# cluster-fpwbg on 2026-11-12: the route's own creationTimestamp was 14:24:21Z,
+# about 17s after this task's budget had already expired at ~14:24:04Z.
+# Widened with headroom over that single data point.
 - name: Wait for reencrypt route to be admitted
   kubernetes.core.k8s_info:
     api_version: route.openshift.io/v1
@@ -200,8 +205,8 @@
     name: central-reencrypt
     namespace: stackrox
   register: r_central_route
-  retries: 12
-  delay: 5
+  retries: 30
+  delay: 10
   until: >-
     r_central_route.resources | length > 0 and
     r_central_route.resources[0].spec.host == _rhacs_central_reencrypt_host
