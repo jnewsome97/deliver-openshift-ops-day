@@ -475,12 +475,10 @@ The UIPlugin adds the **Observe -> Logs** view to the OpenShift console. Enablin
 
 [source,bash,role="execute"]
 ----
-if curl -fsSL --retry 3 --retry-delay 2 -o /tmp/enable-logging-ui.sh {support_base_url}/09-observability/enable-logging-ui.sh; then
-  bash /tmp/enable-logging-ui.sh
-elif curl -fsSL --retry 3 --retry-delay 2 -o /tmp/enable-logging-ui.sh https://raw.githubusercontent.com/rhpds/deliver-openshift-ops-day/main/support/09-observability/enable-logging-ui.sh; then
+if curl -fsSL --retry 3 --retry-delay 2 -o /tmp/enable-logging-ui.sh https://raw.githubusercontent.com/rhpds/deliver-openshift-ops-day/dev/support/09-observability/enable-logging-ui.sh; then
   bash /tmp/enable-logging-ui.sh
 else
-  echo "ERROR: Could not download enable-logging-ui.sh from the Showroom instance or GitHub. Check your network connection and re-run this command."
+  echo "ERROR: Could not download enable-logging-ui.sh from GitHub. Check your network connection and re-run this command."
 fi
 ----
 
@@ -663,12 +661,10 @@ Like the logging UI, the Traces view needs a UIPlugin, and enabling it restarts 
 
 [source,bash,role="execute"]
 ----
-if curl -fsSL --retry 3 --retry-delay 2 -o /tmp/enable-tracing-ui.sh {support_base_url}/09-observability/enable-tracing-ui.sh; then
-  bash /tmp/enable-tracing-ui.sh
-elif curl -fsSL --retry 3 --retry-delay 2 -o /tmp/enable-tracing-ui.sh https://raw.githubusercontent.com/rhpds/deliver-openshift-ops-day/main/support/09-observability/enable-tracing-ui.sh; then
+if curl -fsSL --retry 3 --retry-delay 2 -o /tmp/enable-tracing-ui.sh https://raw.githubusercontent.com/rhpds/deliver-openshift-ops-day/dev/support/09-observability/enable-tracing-ui.sh; then
   bash /tmp/enable-tracing-ui.sh
 else
-  echo "ERROR: Could not download enable-tracing-ui.sh from the Showroom instance or GitHub. Check your network connection and re-run this command."
+  echo "ERROR: Could not download enable-tracing-ui.sh from GitHub. Check your network connection and re-run this command."
 fi
 ----
 
@@ -744,12 +740,10 @@ Remove the observability resources you deployed. The Prometheus monitoring stack
 
 [source,bash,subs="+attributes",role="execute"]
 ----
-if curl -fsSL --retry 3 --retry-delay 2 -o /tmp/cleanup-observability.sh {support_base_url}/cleanup-scripts/cleanup-observability.sh; then
-  bash /tmp/cleanup-observability.sh
-elif curl -fsSL --retry 3 --retry-delay 2 -o /tmp/cleanup-observability.sh https://raw.githubusercontent.com/rhpds/deliver-openshift-ops-day/main/support/cleanup-scripts/cleanup-observability.sh; then
+if curl -fsSL --retry 3 --retry-delay 2 -o /tmp/cleanup-observability.sh https://raw.githubusercontent.com/rhpds/deliver-openshift-ops-day/dev/support/cleanup-scripts/cleanup-observability.sh; then
   bash /tmp/cleanup-observability.sh
 else
-  echo "ERROR: Could not download cleanup-observability.sh from the Showroom instance or GitHub. Check your network connection and re-run this command."
+  echo "ERROR: Could not download cleanup-observability.sh from GitHub. Check your network connection and re-run this command."
 fi
 ----
 
