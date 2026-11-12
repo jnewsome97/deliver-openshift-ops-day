@@ -381,6 +381,27 @@
           K8S_PLUGIN_SA_TOKEN: "{{ r_sa_token_secret.stdout }}"
 
   # --- Dynamic plugins ---
+  - name: Build dynamic plugins list
+    set_fact:
+      _ocp4_days_workload_rhdh_dynamic_plugins:
+        - package: ./dynamic-plugins/dist/backstage-plugin-kubernetes-backend-dynamic
+          disabled: false
+        - package: ./dynamic-plugins/dist/backstage-plugin-kubernetes
+          disabled: false
+        - package: ./dynamic-plugins/dist/backstage-community-plugin-topology
+          disabled: false
+        - package: ./dynamic-plugins/dist/backstage-community-plugin-scaffolder-backend-module-kubernetes-dynamic
+          disabled: false
+        - package: ./dynamic-plugins/dist/roadiehq-scaffolder-backend-module-http-request-dynamic
+          disabled: false
+        - package: ./dynamic-plugins/dist/red-hat-developer-hub-backstage-plugin-quickstart
+          disabled: true
+
+  - name: Require the guest auth backend plugin when guest auth is enabled
+    set_fact:
+      _ocp4_days_workload_rhdh_dynamic_plugins: "{{ _ocp4_days_workload_rhdh_dynamic_plugins + [ocp4_days_workload_rhdh_guest_auth_plugin] }}"
+    when: ocp4_days_workload_rhdh_enable_guest_auth | bool
+
   - name: Create dynamic plugins ConfigMap
     kubernetes.core.k8s:
       state: present
@@ -391,22 +412,11 @@
           name: dynamic-plugins-rhdh
           namespace: "{{ ocp4_days_workload_rhdh_instance_namespace }}"
         data:
-          dynamic-plugins.yaml: |
-            includes:
-              - dynamic-plugins.default.yaml
-            plugins:
-              - package: oci://registry.access.redhat.com/rhdh/backstage-plugin-kubernetes-backend@sha256:bf03068723bff41f5a858dcb75ba5c2eee98a1f2d273fd3fe10b7bbf1d1fb9ed
-                disabled: false
-              - package: oci://registry.access.redhat.com/rhdh/backstage-plugin-kubernetes@sha256:8ebc5eda5c5169ce5b65a411bfcd2d818f5251c7a65fae995e354ba43c6f1eda
-                disabled: false
-              - package: oci://registry.access.redhat.com/rhdh/backstage-community-plugin-topology@sha256:e40ff8f8463a0440edd7ad044f5e5308ca2fc43722e22da5f9a5eecfde20b378
-                disabled: false
-              - package: oci://registry.access.redhat.com/rhdh/backstage-community-plugin-scaffolder-backend-module-kubernetes@sha256:863cc87c1650541b9b56d8457c6320e379ae9be3d0e80c6d8fbb80bd223810c1
-                disabled: false
-              - package: oci://registry.access.redhat.com/rhdh/roadiehq-scaffolder-backend-module-http-request@sha256:ee0258e54a56936026a82e06b8b52844cdd2cff16de726921929b417009d7f3d
-                disabled: false
-              - package: oci://quay.io/rhdh/backstage-plugin-auth-backend-module-guest-provider@sha256:550b73577df28add47ee9cdf45c38224c868bb7304587a68467bb98aace40fe4
-                disabled: false
+          dynamic-plugins.yaml: >-
+            {{ {'includes': ['dynamic-plugins.default.yaml'],
+                'plugins': _ocp4_days_workload_rhdh_dynamic_plugins
+                  + (ocp4_days_workload_rhdh_extra_dynamic_plugins | default([]))}
+               | to_nice_yaml(indent=2) }}
 
   # --- Catalog + template ---
   - name: Set cluster URLs

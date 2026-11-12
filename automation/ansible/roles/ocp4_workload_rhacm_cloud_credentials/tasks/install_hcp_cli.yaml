@@ -33,7 +33,7 @@
   ansible.builtin.set_fact:
     _ocp4_workload_rhacm_hcp_cli_url: >-
       {{ r_hcp_cli_download.resources[0] | to_json | from_json
-      | json_query("spec.links[?contains(href,'/linux/amd64')].href") | first }}
+      | json_query("spec.links[?contains(href,'-linux-amd64')].href") | first }}
 
 - name: DEBUG - HCP CLI install context
   ignore_errors: true
