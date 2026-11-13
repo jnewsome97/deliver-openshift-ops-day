@@ -117,12 +117,10 @@ oc create configmap ca-config-map \
 
 [source,bash,subs="+attributes",role="execute"]
 ----
-if curl -fsSL --retry 3 --retry-delay 2 -o /tmp/configure-oauth-ldap.sh {support_base_url}/07-ldap-authentication/configure-oauth-ldap.sh; then
-  bash /tmp/configure-oauth-ldap.sh
-elif curl -fsSL --retry 3 --retry-delay 2 -o /tmp/configure-oauth-ldap.sh https://raw.githubusercontent.com/rhpds/deliver-openshift-ops-day/main/support/07-ldap-authentication/configure-oauth-ldap.sh; then
+if curl -fsSL --retry 3 --retry-delay 2 -o /tmp/configure-oauth-ldap.sh https://raw.githubusercontent.com/rhpds/deliver-openshift-ops-day/dev/support/07-ldap-authentication/configure-oauth-ldap.sh; then
   bash /tmp/configure-oauth-ldap.sh
 else
-  echo "ERROR: Could not download configure-oauth-ldap.sh from the Showroom instance or GitHub. Check your network connection and re-run this command."
+  echo "ERROR: Could not download configure-oauth-ldap.sh from GitHub. Check your network connection and re-run this command."
 fi
 ----
 

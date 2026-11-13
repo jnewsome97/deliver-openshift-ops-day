@@ -201,12 +201,10 @@ The Keycloak setup script already created the `rhbk-client-secret` in `openshift
 
 [source,bash,subs="+attributes",role="execute"]
 ----
-if curl -fsSL --retry 3 --retry-delay 2 -o /tmp/configure-oauth-oidc.sh {support_base_url}/08-oidc-authentication/configure-oauth-oidc.sh; then
-  bash /tmp/configure-oauth-oidc.sh
-elif curl -fsSL --retry 3 --retry-delay 2 -o /tmp/configure-oauth-oidc.sh https://raw.githubusercontent.com/rhpds/deliver-openshift-ops-day/main/support/08-oidc-authentication/configure-oauth-oidc.sh; then
+if curl -fsSL --retry 3 --retry-delay 2 -o /tmp/configure-oauth-oidc.sh https://raw.githubusercontent.com/rhpds/deliver-openshift-ops-day/dev/support/08-oidc-authentication/configure-oauth-oidc.sh; then
   bash /tmp/configure-oauth-oidc.sh
 else
-  echo "ERROR: Could not download configure-oauth-oidc.sh from the Showroom instance or GitHub. Check your network connection and re-run this command."
+  echo "ERROR: Could not download configure-oauth-oidc.sh from GitHub. Check your network connection and re-run this command."
 fi
 ----
 
