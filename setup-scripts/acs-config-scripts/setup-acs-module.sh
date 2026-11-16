@@ -18,6 +18,13 @@
 # Usage (from a bastion that is already logged in with oc, with
 # ~/demo-applications already cloned):
 #   ./setup-scripts/acs-config-scripts/setup-acs-module.sh
+#
+# Pass --mcp-only to skip workload deployment and FAM/policy setup and only
+# run the MCP/Lightspeed registration step. Use this for the "register MCP
+# after completing the Lightspeed module" case instead of a full re-run --
+# a full re-run re-applies the workload manifests, which re-triggers Sensor's
+# image-scan backlog for those deployments even though nothing changed.
+#   ./setup-scripts/acs-config-scripts/setup-acs-module.sh --mcp-only
 
 set -euo pipefail
 
@@ -240,6 +247,30 @@ wait_for_central() {
     sleep 10
   done
   warn "Central did not answer /v1/ping in time."
+  return 1
+}
+
+wait_for_scan_backlog() {
+  # On a fresh Central/Sensor connect, Sensor reports every deployment in the
+  # cluster (not just this workshop's namespaces), and Central queues a scan
+  # for every image it has not seen before. Runtime process-based policies
+  # (e.g. the Alpine apk enforcement demo) can lag behind this backlog, so
+  # /v1/ping going green is not enough to say the module is ready to demo.
+  local quiet_checks=0
+  local i errs
+  info "Waiting for the initial image-scan backlog to drain (first Sensor connect only)..."
+  for i in $(seq 1 30); do
+    errs="$(oc logs -n "${ACS_NS}" deploy/sensor --since=15s 2>/dev/null | grep -c "DeadlineExceeded" || true)"
+    if [[ "${errs}" -eq 0 ]]; then
+      quiet_checks=$((quiet_checks + 1))
+      [[ "${quiet_checks}" -ge 2 ]] && { info "Image-scan backlog has drained."; return 0; }
+    else
+      quiet_checks=0
+    fi
+    sleep 10
+  done
+  warn "Image-scan backlog did not fully drain within 5 minutes."
+  warn "Runtime policies (e.g. the Alpine apk enforcement demo) may not trigger on the first attempt yet -- wait a minute and retry."
   return 1
 }
 
@@ -643,15 +674,27 @@ configure_mcp_and_lightspeed() {
 }
 
 main() {
+  local mcp_only=false
+  if [[ "${1:-}" == "--mcp-only" ]]; then
+    mcp_only=true
+  fi
+
   require_tools
-  deploy_workloads
+  if [[ "${mcp_only}" == false ]]; then
+    deploy_workloads
+  fi
   detect_acs
   configure_lightspeed_risk_enrichment
-  info "Updating Central and Sensor..."
-  patch_stackrox_cr central "${CENTRAL_NAME}" false "${RISK_ENRICHMENT_ENDPOINT}"
-  patch_stackrox_cr securedcluster "${SECURED_NAME}" true
-  apply_fam_policy
+  if [[ "${mcp_only}" == false ]]; then
+    info "Updating Central and Sensor..."
+    patch_stackrox_cr central "${CENTRAL_NAME}" false "${RISK_ENRICHMENT_ENDPOINT}"
+    patch_stackrox_cr securedcluster "${SECURED_NAME}" true
+    apply_fam_policy
+  fi
   configure_mcp_and_lightspeed
+  if [[ "${mcp_only}" == false ]]; then
+    wait_for_scan_backlog || true
+  fi
 }
 
 main "$@"

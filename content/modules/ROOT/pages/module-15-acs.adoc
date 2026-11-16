@@ -34,7 +34,7 @@ RHACS administrator login credentials:
 
 The setup script in the demo applications repository deploys the workloads for this module. It also turns on file activity monitoring for this cluster. OpenShift Lightspeed is not part of every environment -- when it is, and an `OLSConfig` already exists, the script additionally registers the ACS MCP server and turns on Lightspeed-assisted risk enrichment, which lets RHACS explain a deployment risk score with the Lightspeed model on this cluster. It does not turn on init-container evaluation.
 
-If OpenShift Lightspeed is enabled in this environment and you complete that module after this one, run the setup script again. The second run registers the MCP server, enables risk enrichment, and leaves the workloads in place. If Lightspeed is not enabled here, skip the "Ask Lightspeed about a RHACS finding" section below.
+If OpenShift Lightspeed is enabled in this environment and you complete that module after this one, re-run the setup script with `--mcp-only` later (see "Ask Lightspeed about a RHACS finding" below) to register the MCP server and enable risk enrichment, without redeploying workloads or re-applying the FAM/runtime policies. If Lightspeed is not enabled here, skip the "Ask Lightspeed about a RHACS finding" section below.
 
 .Procedure
 . Run the setup script from your home directory:
@@ -446,11 +446,11 @@ OpenShift Lightspeed can answer questions about the cluster in the console. The 
 Complete the Lightspeed module first if the chat icon is not in the console yet. That module creates the `OLSConfig` this chat uses.
 
 .Procedure
-. If you created the `OLSConfig` after the setup script ran, register the MCP server now. This is safe to run again:
+. If the setup script's summary earlier in this module already showed `Lightspeed: OLSConfig updated with acs-mcp`, skip this step -- MCP registration is already done. Otherwise, if you completed the Lightspeed module *after* running the setup script above, register the MCP server now with `--mcp-only`. This only wires up Lightspeed; it does not redeploy workloads or touch the FAM/runtime policies, so it is safe to run as many times as you need:
 +
 [source,bash,subs="+macros,+attributes",role=execute]
 ----
-curl -fsSL https://raw.githubusercontent.com/rhpds/deliver-openshift-ops-day/main/setup-scripts/acs-config-scripts/setup-acs-module.sh | bash
+curl -fsSL https://raw.githubusercontent.com/rhpds/deliver-openshift-ops-day/main/setup-scripts/acs-config-scripts/setup-acs-module.sh | bash -s -- --mcp-only
 ----
 +
 . In the OpenShift console, open *OpenShift Lightspeed*.
