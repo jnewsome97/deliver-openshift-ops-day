@@ -157,7 +157,7 @@ image::09-create-menu.png[link=self, window=blank, width=100%, Create VM]
 A pop-up window may appear at this point, close this pop-up and it will show as selected.
 ====
 
-. Click *Next* and under Template select *Red Hat Enterprise Linux 9 VM*
+. Click *Next* and under Template select *rhel9-server-small*
 +
 image::10-template-menu.png[link=self, window=blank, width=100%, Create VM]
 +
