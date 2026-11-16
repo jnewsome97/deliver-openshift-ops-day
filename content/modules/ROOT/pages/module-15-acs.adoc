@@ -47,7 +47,7 @@ if [ -d ~/demo-applications/.git ]; then
 else
   git clone https://github.com/mfosterrox/demo-applications.git ~/demo-applications
 fi
-bash ~/demo-applications/scripts/setup-acs-module.sh
+curl -fsSL https://raw.githubusercontent.com/rhpds/deliver-openshift-ops-day/main/setup-scripts/acs-config-scripts/setup-acs-module.sh | bash
 ----
 +
 The script prints a short summary when it finishes. A first run with Lightspeed already configured includes:
@@ -450,7 +450,7 @@ Complete the Lightspeed module first if the chat icon is not in the console yet.
 +
 [source,bash,subs="+macros,+attributes",role=execute]
 ----
-bash ~/demo-applications/scripts/setup-acs-module.sh
+curl -fsSL https://raw.githubusercontent.com/rhpds/deliver-openshift-ops-day/main/setup-scripts/acs-config-scripts/setup-acs-module.sh | bash
 ----
 +
 . In the OpenShift console, open *OpenShift Lightspeed*.
