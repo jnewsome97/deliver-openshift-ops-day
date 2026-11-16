@@ -171,7 +171,7 @@ Confirm the control is on, that every SPIRE agent passed it, and that the attest
 +
 [source,bash,subs="+macros,+attributes",role=execute]
 ----
-ZTWIM_NS=$(oc get spireserver -A -o jsonpath='{.items[0].metadata.namespace}')
+ZTWIM_NS=$(oc get pods -A -l app.kubernetes.io/name=spire-server -o jsonpath='{.items[0].metadata.namespace}')
 echo "$ZTWIM_NS"
 ----
 +
@@ -181,7 +181,7 @@ The name is `openshift-zero-trust-workload-identity-manager` or `zero-trust-work
 +
 [source,bash,subs="+macros,+attributes",role=execute]
 ----
-ZTWIM_NS=$(oc get spireserver -A -o jsonpath='{.items[0].metadata.namespace}')
+ZTWIM_NS=$(oc get pods -A -l app.kubernetes.io/name=spire-server -o jsonpath='{.items[0].metadata.namespace}')
 oc get spireagent cluster -n "$ZTWIM_NS" -o jsonpath='{.spec.nodeAttestor.k8sPSATEnabled}{"\n"}'
 ----
 +
@@ -194,11 +194,11 @@ true
 +
 [source,bash,subs="+macros,+attributes",role=execute]
 ----
-ZTWIM_NS=$(oc get spireserver -A -o jsonpath='{.items[0].metadata.namespace}')
+ZTWIM_NS=$(oc get pods -A -l app.kubernetes.io/name=spire-server -o jsonpath='{.items[0].metadata.namespace}')
 echo "Running SPIRE agent pods: $(oc get pods -n "$ZTWIM_NS" -l app.kubernetes.io/name=spire-agent --field-selector=status.phase=Running --no-headers | wc -l | tr -d ' ')"
 oc get pods -n "$ZTWIM_NS" -l app.kubernetes.io/name=spire-agent
 oc exec -n "$ZTWIM_NS" spire-server-0 -c spire-server -- \
-  /opt/spire/bin/spire-server agent list \
+  /spire-server agent list \
   -socketPath /tmp/spire-server/private/api.sock
 ----
 +
@@ -224,16 +224,16 @@ Confirm all of the following:
 +
 [source,bash,subs="+macros,+attributes",role=execute]
 ----
-ZTWIM_NS=$(oc get spireserver -A -o jsonpath='{.items[0].metadata.namespace}')
+ZTWIM_NS=$(oc get pods -A -l app.kubernetes.io/name=spire-server -o jsonpath='{.items[0].metadata.namespace}')
 echo "Operator namespace: ${ZTWIM_NS}"
 oc get nodes -o custom-columns=NAME:.metadata.name,UID:.metadata.uid --no-headers
 AGENT_ID=$(oc exec -n "$ZTWIM_NS" spire-server-0 -c spire-server -- \
-  /opt/spire/bin/spire-server agent list \
+  /spire-server agent list \
   -socketPath /tmp/spire-server/private/api.sock \
   | awk '/SPIFFE ID/ { print $NF; exit }')
 echo "Attested agent: ${AGENT_ID}"
 oc exec -n "$ZTWIM_NS" spire-server-0 -c spire-server -- \
-  /opt/spire/bin/spire-server agent show \
+  /spire-server agent show \
   -socketPath /tmp/spire-server/private/api.sock \
   -spiffeID "${AGENT_ID}"
 ----
@@ -275,31 +275,33 @@ The template is the SPIFFE ID you saw in the client certificate URI. The selecto
 +
 [source,bash,subs="+macros,+attributes",role=execute]
 ----
-ZTWIM_NS=$(oc get spireserver -A -o jsonpath='{.items[0].metadata.namespace}')
+ZTWIM_NS=$(oc get pods -A -l app.kubernetes.io/name=spire-server -o jsonpath='{.items[0].metadata.namespace}')
+TRUST_DOMAIN=$(oc get ingress.config.openshift.io cluster -o jsonpath='{.spec.domain}')
 oc exec -n "$ZTWIM_NS" spire-server-0 -c spire-server -- \
-  /opt/spire/bin/spire-server entry show \
+  /spire-server entry show \
   -socketPath /tmp/spire-server/private/api.sock \
-  -selector k8s:ns:postgresql-spiffe-client
+  -spiffeID "spiffe://${TRUST_DOMAIN}/ns/postgresql-spiffe-client/sa/postgresql-spiffe-client"
 ----
 +
-Confirm all of the following. Extra selectors, such as pod name or pod UID, may also be present:
+Confirm all of the following:
 +
 * The SPIFFE ID matches the certificate URI from the previous section: `spiffe://<trust-domain>/ns/postgresql-spiffe-client/sa/postgresql-spiffe-client`.
 * The Parent ID is one of the `k8s_psat` agent SPIFFE IDs from the node attestation list. That parent is the proof that node attestation is in the chain. SPIRE issued the certificate under an agent the API server already validated.
-* Selectors include `k8s:ns:postgresql-spiffe-client`, `k8s:sa:postgresql-spiffe-client`, and `k8s:pod-label:app:postgresql-spiffe-client`.
+* A selector of `k8s:pod-uid:<uid>` is present, tying the entry to the specific pod that was attested.
 +
 . Repeat the check for the database server:
 +
 [source,bash,subs="+macros,+attributes",role=execute]
 ----
-ZTWIM_NS=$(oc get spireserver -A -o jsonpath='{.items[0].metadata.namespace}')
+ZTWIM_NS=$(oc get pods -A -l app.kubernetes.io/name=spire-server -o jsonpath='{.items[0].metadata.namespace}')
+TRUST_DOMAIN=$(oc get ingress.config.openshift.io cluster -o jsonpath='{.spec.domain}')
 oc exec -n "$ZTWIM_NS" spire-server-0 -c spire-server -- \
-  /opt/spire/bin/spire-server entry show \
+  /spire-server entry show \
   -socketPath /tmp/spire-server/private/api.sock \
-  -selector k8s:ns:postgresql-spiffe
+  -spiffeID "spiffe://${TRUST_DOMAIN}/ns/postgresql-spiffe/sa/postgresql-spiffe"
 ----
 +
-Apply the same three checks to `spiffe://<trust-domain>/ns/postgresql-spiffe/sa/postgresql-spiffe`. The Parent ID is again a `k8s_psat` agent ID. The selectors name the `postgresql-spiffe` namespace, service account, and `app=postgresql-spiffe` pod label.
+Apply the same checks to `spiffe://<trust-domain>/ns/postgresql-spiffe/sa/postgresql-spiffe`. The Parent ID is again a `k8s_psat` agent ID, and a `k8s:pod-uid:<uid>` selector names the attested pod.
 
 The mutual TLS connection in the next section uses a certificate SPIRE issued only after both of these checks. A pod that misses the selectors never receives an SVID, which is why the unauthorized pod later in this lab cannot connect. PostgreSQL still maps the certificate common name to the database user. Attestation is what made SPIRE willing to issue the certificate.
 
