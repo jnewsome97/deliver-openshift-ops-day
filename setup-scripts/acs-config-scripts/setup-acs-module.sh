@@ -15,8 +15,9 @@
 # or the Lightspeed operator was missing. Workloads and RHACS settings that
 # are already in place are left alone.
 #
-# Usage (from a bastion that is already logged in with oc, with
-# ~/demo-applications already cloned):
+# Usage (from a bastion that is already logged in with oc; the full run
+# also needs ~/demo-applications cloned -- the module's setup step does
+# this):
 #   ./setup-scripts/acs-config-scripts/setup-acs-module.sh
 #
 # Pass --mcp-only to skip workload deployment and FAM/policy setup and only
@@ -28,8 +29,11 @@
 
 set -euo pipefail
 
+# Only needed when deploying workloads. --mcp-only never touches these
+# manifests, so the existence check lives in deploy_workloads instead of at
+# the top of the script (the module's Lightspeed section runs --mcp-only on
+# bastions where the clone may not exist).
 readonly ROOT="${DEMO_APPLICATIONS_ROOT:-${HOME}/demo-applications}"
-[[ -d "${ROOT}" ]] || { echo "ERROR: ${ROOT} not found. Clone https://github.com/mfosterrox/demo-applications.git first." >&2; exit 1; }
 
 readonly MCP_NAMESPACE="rhacs-mcp"
 readonly MCP_DEPLOYMENT="stackrox-mcp"
@@ -89,6 +93,8 @@ apply_path() {
 
 deploy_workloads() {
   local rel
+  [[ -d "${ROOT}" ]] \
+    || die "${ROOT} not found. Clone https://github.com/mfosterrox/demo-applications.git first (the module's setup step does this), or set DEMO_APPLICATIONS_ROOT."
   info "Deploying workshop workloads..."
   local -a paths=(
     k8s-deployment-manifests/-namespaces/namespace-emojivoto.yaml
@@ -250,27 +256,134 @@ wait_for_central() {
   return 1
 }
 
-wait_for_scan_backlog() {
-  # On a fresh Central/Sensor connect, Sensor reports every deployment in the
-  # cluster (not just this workshop's namespaces), and Central queues a scan
-  # for every image it has not seen before. Runtime process-based policies
-  # (e.g. the Alpine apk enforcement demo) can lag behind this backlog, so
-  # /v1/ping going green is not enough to say the module is ready to demo.
-  local quiet_checks=0
-  local i errs
-  info "Waiting for the initial image-scan backlog to drain (first Sensor connect only)..."
-  for i in $(seq 1 30); do
-    errs="$(oc logs -n "${ACS_NS}" deploy/sensor --since=15s 2>/dev/null | grep -c "DeadlineExceeded" || true)"
-    if [[ "${errs}" -eq 0 ]]; then
-      quiet_checks=$((quiet_checks + 1))
-      [[ "${quiet_checks}" -ge 2 ]] && { info "Image-scan backlog has drained."; return 0; }
-    else
-      quiet_checks=0
+memory_to_mi() {
+  # "2Gi" -> 2048, "512Mi" -> 512, "1048576Ki" -> 1024, bare numbers pass through
+  local v="$1"
+  case "${v}" in
+    *Gi) echo $(( ${v%Gi} * 1024 )) ;;
+    *Mi) echo $(( ${v%Mi} )) ;;
+    *Ki) echo $(( ${v%Ki} / 1024 )) ;;
+    *) echo "${v}" ;;
+  esac
+}
+
+ensure_scanner_db_resources() {
+  # scanner-v4-db OOMKills at the default 2Gi limit while Postgres loads the
+  # CVE database on first connect. Observed on event clusters: the DB
+  # crashloops for hours, no image scan ever completes, and Central's
+  # reprocessor stops retrying until Central itself is restarted. 4Gi is
+  # verified stable (the DB settles around 500Mi after the initial load).
+  # Idempotent: patches only when the current limit is below 4Gi.
+  local current limit_mi
+  if ! oc get deployment scanner-v4-db -n "${ACS_NS}" >/dev/null 2>&1; then
+    return 0  # scanner v4 not deployed, nothing to size
+  fi
+  current="$(oc get central "${CENTRAL_NAME}" -n "${ACS_NS}" \
+    -o jsonpath='{.spec.scannerV4.db.resources.limits.memory}' 2>/dev/null || true)"
+  limit_mi="$(memory_to_mi "${current:-0}")"
+  if [[ "${limit_mi}" -ge 4096 ]]; then
+    return 0
+  fi
+  info "Bumping scanner-v4-db memory limit (${current:-unset} -> 4Gi) so it survives the initial CVE database load..."
+  oc patch central "${CENTRAL_NAME}" -n "${ACS_NS}" --type merge \
+    -p '{"spec":{"scannerV4":{"db":{"resources":{"requests":{"cpu":"500m","memory":"2Gi"},"limits":{"cpu":"1","memory":"4Gi"}}}}}}' >/dev/null
+  oc rollout status deployment/scanner-v4-db -n "${ACS_NS}" --timeout=180s >/dev/null
+  info "scanner-v4-db is running with the raised memory limit."
+}
+
+wait_for_demo_scan_data() {
+  # The "Ask Lightspeed about a RHACS finding" section needs CVE data on the
+  # log4shell image in Central. /v1/ping going green says nothing about that:
+  # on a fresh install Sensor reports every deployment in the cluster and
+  # Central's reprocessor has to work through them before the demo images get
+  # their data. If scanner-v4-db crashlooped earlier, the reprocessor also
+  # stops retrying entirely and only a Central restart clears that backlog.
+  # So poll the actual image record (per-image GET: the list endpoint does
+  # not include scan data), restart Central once if there is no progress
+  # after two minutes, and time out with the manual workaround instead of a
+  # false "ready".
+  local host password image_name i central_restarted=false
+  image_name="quay.io/mfoster/log4shell:0.1.0"
+  password="$(read_admin_password)" \
+    || { warn "Could not read the ACS admin password; skipping scan verification for ${image_name}."; return 0; }
+  host="$(central_route_host || true)"
+  if [[ -z "${host}" ]]; then
+    warn "Could not resolve the Central route; skipping scan verification for ${image_name}."
+    return 0
+  fi
+
+  info "Waiting for CVE data on ${image_name} (needed by the Lightspeed section)."
+  info "This can take a few minutes on the first run while images are scanned for vulnerabilities."
+  for i in $(seq 1 60); do
+    if PASSWORD="${password}" CENTRAL_HOST="${host}" IMAGE_NAME="${image_name}" python3 - <<'PY'
+import base64, json, os, ssl, sys, urllib.request
+
+password = os.environ["PASSWORD"]
+host = os.environ["CENTRAL_HOST"]
+image_name = os.environ["IMAGE_NAME"]
+
+try:
+    ctx = ssl._create_unverified_context()
+    auth = base64.b64encode(f"admin:{password}".encode()).decode()
+
+    req = urllib.request.Request(
+        f"https://{host}/v1/images?pagination.limit=1000",
+        headers={"Authorization": f"Basic {auth}"})
+    with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
+        images = json.loads(resp.read().decode()).get("images", [])
+
+    image_id = None
+    for item in images:
+        name = item.get("name")
+        full = name.get("fullName") if isinstance(name, dict) else str(name)
+        if full == image_name:
+            image_id = item.get("id")
+            break
+    if not image_id:
+        sys.exit(1)  # image not registered in Central yet
+
+    req = urllib.request.Request(
+        f"https://{host}/v1/images/{image_id}",
+        headers={"Authorization": f"Basic {auth}"})
+    with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
+        doc = json.loads(resp.read().decode())
+
+    scan = doc.get("scan") or {}
+    cves = [v.get("cve") for c in scan.get("components", []) for v in c.get("vulns", [])]
+    sys.exit(0 if "CVE-2021-44228" in cves else 1)
+except Exception:
+    # Transient errors (Central restarting, 503s from the route) are
+    # expected while the stack settles; just poll again.
+    sys.exit(1)
+PY
+    then
+      info "Image scan verified: ${image_name} has CVE data (CVE-2021-44228 present)."
+      return 0
+    fi
+
+    # Two minutes with no result usually means Central's reprocessor has
+    # backed off after earlier failures (e.g. a scanner-v4-db crashloop).
+    # One Central restart clears it -- but only once Central is actually
+    # stable. The CR patches earlier in this script also roll Central, and
+    # restarting again mid-roll just adds delay.
+    if [[ "${i}" -ge 12 && "${central_restarted}" == false ]]; then
+      if oc rollout status deployment/central -n "${ACS_NS}" --timeout=10s >/dev/null 2>&1; then
+        warn "No CVE data after 2 minutes with Central up -- restarting Central once to clear a possible reprocessor backlog..."
+        oc rollout restart deployment/central -n "${ACS_NS}" >/dev/null 2>&1 || true
+        oc rollout status deployment/central -n "${ACS_NS}" --timeout=180s >/dev/null 2>&1 || true
+        central_restarted=true
+      fi
+    fi
+    if (( i % 3 == 0 )); then
+      info "Still waiting for CVE data... ($(( i * 10 ))s elapsed)"
     fi
     sleep 10
   done
-  warn "Image-scan backlog did not fully drain within 5 minutes."
-  warn "Runtime policies (e.g. the Alpine apk enforcement demo) may not trigger on the first attempt yet -- wait a minute and retry."
+  warn "Timed out waiting for CVE data on ${image_name}."
+  warn "The Lightspeed section of this module may show no vulnerabilities until the image is scanned."
+  warn "Manual workaround: force a rescan via Central's API (password from:"
+  warn "  oc -n ${ACS_NS} get secret acs-password -o go-template='{{index .data \"password\" | base64decode}}')"
+  warn "  curl -sk -u admin:<password> -X POST https://${host}/v1/images/scan -H 'Content-Type: application/json' -d '{\"imageName\":\"${image_name}\",\"force\":true}'"
   return 1
 }
 
@@ -686,6 +799,8 @@ main() {
   detect_acs
   configure_lightspeed_risk_enrichment
   if [[ "${mcp_only}" == false ]]; then
+    ensure_scanner_db_resources \
+      || warn "Could not bump scanner-v4-db resources; continuing anyway."
     info "Updating Central and Sensor..."
     patch_stackrox_cr central "${CENTRAL_NAME}" false "${RISK_ENRICHMENT_ENDPOINT}"
     patch_stackrox_cr securedcluster "${SECURED_NAME}" true
@@ -693,7 +808,7 @@ main() {
   fi
   configure_mcp_and_lightspeed
   if [[ "${mcp_only}" == false ]]; then
-    wait_for_scan_backlog || true
+    wait_for_demo_scan_data || true
   fi
 }
 

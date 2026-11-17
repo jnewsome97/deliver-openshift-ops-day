@@ -68,12 +68,17 @@ spec:
   scannerV4:
     db:
       resources:
+        # The default 2Gi limit is not enough while Postgres loads the CVE
+        # database on first connect: the container gets OOMKilled in a loop,
+        # no image scan ever completes, and Central's reprocessor stops
+        # retrying until Central is restarted. Verified stable at 4Gi (the
+        # DB settles around 500Mi after the initial load).
         requests:
           cpu: '500m'
-          memory: 1Gi
+          memory: 2Gi
         limits:
           cpu: '1'
-          memory: 2Gi
+          memory: 4Gi
       persistence:
         persistentVolumeClaim:
 {% if ocp4_workload_rhacs_central_storage_class is defined %}
