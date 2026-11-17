@@ -15,6 +15,10 @@
 # this can never collide with a live learner on the same page.
 
 - name: "Performance | Delete qa-e2e-hpa-demo project"
+  register: _qa_retry_performance_0
+  until: _qa_retry_performance_0 is succeeded
+  retries: '{{ qa_api_retries | default(12) }}'
+  delay: '{{ qa_poll_delay | default(5) }}'
   kubernetes.core.k8s:
     state: absent
     api_version: project.openshift.io/v1
@@ -22,16 +26,23 @@
     name: qa-e2e-hpa-demo
 
 - name: "Performance | Wait for qa-e2e-hpa-demo project to be deleted"
-  ansible.builtin.command: oc get project qa-e2e-hpa-demo
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: qa-e2e-hpa-demo
   register: command_r
-  until: command_r.rc == 1
-  failed_when: false
-  retries: 10
-  delay: 5
-
+  until:
+  - command_r is succeeded
+  - command_r.resources | default([]) | length == 0
+  retries: '{{ qa_namespace_delete_retries | default(60) }}'
+  delay: '{{ qa_poll_delay | default(5) }}'
 - name: "Performance | Run HPA metrics-flowing sequence"
   block:
     - name: "Performance | Create qa-e2e-hpa-demo project"
+      register: _qa_retry_performance_3
+      until: _qa_retry_performance_3 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         api_version: project.openshift.io/v1
@@ -39,6 +50,10 @@
         name: qa-e2e-hpa-demo
 
     - name: "Performance | Deploy a small app with CPU requests set"
+      register: _qa_retry_performance_4
+      until: _qa_retry_performance_4 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         definition:
@@ -75,13 +90,17 @@
         label_selectors:
           - app=qa-e2e-hpa-app
       register: e2e_performance_pod
-      until: >-
-        e2e_performance_pod.resources | default([]) | length > 0 and
-        e2e_performance_pod.resources[0].status.phase | default('') == 'Running'
-      retries: 24
+      until:
+      - e2e_performance_pod is succeeded
+      - e2e_performance_pod.resources | default([]) | length > 0 and e2e_performance_pod.resources[0].status.phase | default('') == 'Running'
+      retries: '{{ qa_readiness_retries | default(60) }}'
       delay: 5
 
     - name: "Performance | Create an HPA against the app"
+      register: _qa_retry_performance_6
+      until: _qa_retry_performance_6 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         definition:
@@ -112,15 +131,17 @@
         name: qa-e2e-hpa-app
         namespace: qa-e2e-hpa-demo
       register: e2e_performance_hpa
-      until: >-
-        e2e_performance_hpa.resources | default([], true) | length > 0 and
-        e2e_performance_hpa.resources[0].status.currentMetrics | default([], true) | length > 0 and
-        e2e_performance_hpa.resources[0].status.currentMetrics[0].resource.current.averageUtilization
-        | default(none) is not none
-      retries: 24
+      until:
+      - e2e_performance_hpa is succeeded
+      - e2e_performance_hpa.resources | default([], true) | length > 0 and e2e_performance_hpa.resources[0].status.currentMetrics | default([], true) | length > 0 and e2e_performance_hpa.resources[0].status.currentMetrics[0].resource.current.averageUtilization | default(none) is not none
+      retries: '{{ qa_readiness_retries | default(30) }}'
       delay: 10
   always:
     - name: "Performance | Delete qa-e2e-hpa-demo project"
+      register: _qa_retry_performance_8
+      until: _qa_retry_performance_8 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: absent
         api_version: project.openshift.io/v1
@@ -128,9 +149,13 @@
         name: qa-e2e-hpa-demo
 
     - name: "Performance | Wait for qa-e2e-hpa-demo project to be deleted"
-      ansible.builtin.command: oc get project qa-e2e-hpa-demo
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Namespace
+        name: qa-e2e-hpa-demo
       register: command_r
-      until: command_r.rc == 1
-      failed_when: false
-      retries: 10
-      delay: 5
+      until:
+      - command_r is succeeded
+      - command_r.resources | default([]) | length == 0
+      retries: '{{ qa_namespace_delete_retries | default(60) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'

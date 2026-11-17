@@ -12,6 +12,10 @@
 # with a live learner on the same page.
 
 - name: "Netsec | Delete qa-e2e netpol projects"
+  register: _qa_retry_netsec_0
+  until: _qa_retry_netsec_0 is succeeded
+  retries: '{{ qa_api_retries | default(12) }}'
+  delay: '{{ qa_poll_delay | default(5) }}'
   kubernetes.core.k8s:
     state: absent
     api_version: project.openshift.io/v1
@@ -22,12 +26,16 @@
     - qa-e2e-netpol-backend
 
 - name: "Netsec | Wait for qa-e2e netpol projects to be deleted"
-  ansible.builtin.command: oc get project {{ item }}
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: '{{ item }}'
   register: command_r
-  until: command_r.rc == 1
-  failed_when: false
-  retries: 10
-  delay: 5
+  until:
+  - command_r is succeeded
+  - command_r.resources | default([]) | length == 0
+  retries: '{{ qa_namespace_delete_retries | default(60) }}'
+  delay: '{{ qa_poll_delay | default(5) }}'
   loop:
     - qa-e2e-netpol-frontend
     - qa-e2e-netpol-backend
@@ -35,6 +43,10 @@
 - name: "Netsec | Run deny-all/allow NetworkPolicy sequence"
   block:
     - name: "Netsec | Create qa-e2e netpol projects"
+      register: _qa_retry_netsec_3
+      until: _qa_retry_netsec_3 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         api_version: project.openshift.io/v1
@@ -45,6 +57,10 @@
         - qa-e2e-netpol-backend
 
     - name: "Netsec | Label frontend namespace for the allow rule's namespaceSelector"
+      register: _qa_retry_netsec_4
+      until: _qa_retry_netsec_4 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         api_version: v1
@@ -56,6 +72,10 @@
               app-tier: qa-e2e-frontend
 
     - name: "Netsec | Deploy frontend and backend apps"
+      register: _qa_retry_netsec_5
+      until: _qa_retry_netsec_5 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         definition: "{{ item }}"
@@ -109,16 +129,19 @@
         label_selectors:
           - "app={{ item | regex_replace('^qa-e2e-netpol-', '') }}"
       register: e2e_netsec_pods
-      until: >-
-        e2e_netsec_pods.resources | default([]) | length > 0 and
-        e2e_netsec_pods.resources[0].status.phase | default('') == 'Running'
-      retries: 24
+      until:
+      - e2e_netsec_pods is succeeded
+      - e2e_netsec_pods.resources | default([]) | length > 0 and e2e_netsec_pods.resources[0].status.phase | default('') == 'Running'
+      retries: '{{ qa_readiness_retries | default(60) }}'
       delay: 5
       loop:
         - qa-e2e-netpol-frontend
         - qa-e2e-netpol-backend
 
     - name: "Netsec | Get backend pod IP"
+      until: e2e_netsec_backend_pod is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s_info:
         api_version: v1
         kind: Pod
@@ -126,11 +149,10 @@
         label_selectors:
           - app=backend
       register: e2e_netsec_backend_pod
-
     - name: "Netsec | Confirm connectivity works before any NetworkPolicy is applied"
       ansible.builtin.command: >-
         oc exec -n qa-e2e-netpol-frontend deployment/frontend --
-        curl -s --connect-timeout 5 http://{{ e2e_netsec_backend_pod.resources[0].status.podIP }}:8080
+        curl -s --connect-timeout 5 --max-time 10 http://{{ e2e_netsec_backend_pod.resources[0].status.podIP }}:8080
       register: e2e_netsec_precheck
       changed_when: false
       retries: 5
@@ -138,6 +160,10 @@
       until: e2e_netsec_precheck.rc == 0
 
     - name: "Netsec | Apply deny-all NetworkPolicy in backend namespace"
+      register: _qa_retry_netsec_9
+      until: _qa_retry_netsec_9 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         definition:
@@ -155,17 +181,26 @@
     - name: "Netsec | Confirm connectivity is now blocked"
       ansible.builtin.command: >-
         oc exec -n qa-e2e-netpol-frontend deployment/frontend --
-        curl -s --connect-timeout 5 http://{{ e2e_netsec_backend_pod.resources[0].status.podIP }}:8080
+        curl -s --connect-timeout 5 --max-time 10 http://{{ e2e_netsec_backend_pod.resources[0].status.podIP }}:8080
       register: e2e_netsec_blocked
       changed_when: false
-      failed_when: false
+      # Retry while traffic is still allowed. Stop and fail on CLI/auth errors;
+      # only curl connection-refused/timeout codes count as policy denial.
+      failed_when: e2e_netsec_blocked.rc | default(1) not in [0, 7, 28]
+      until: e2e_netsec_blocked.rc | default(1) != 0
+      retries: 12
+      delay: 5
 
     - name: "Netsec | Fail if deny-all NetworkPolicy did not block traffic"
       ansible.builtin.fail:
         msg: "netsec e2e: connectivity still worked after deny-all NetworkPolicy was applied"
-      when: e2e_netsec_blocked.rc == 0
+      when: e2e_netsec_blocked.rc not in [7, 28]
 
     - name: "Netsec | Apply scoped allow-from-frontend NetworkPolicy"
+      register: _qa_retry_netsec_12
+      until: _qa_retry_netsec_12 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         definition:
@@ -192,7 +227,7 @@
     - name: "Netsec | Confirm connectivity is restored by the scoped allow rule"
       ansible.builtin.command: >-
         oc exec -n qa-e2e-netpol-frontend deployment/frontend --
-        curl -s --connect-timeout 5 http://{{ e2e_netsec_backend_pod.resources[0].status.podIP }}:8080
+        curl -s --connect-timeout 5 --max-time 10 http://{{ e2e_netsec_backend_pod.resources[0].status.podIP }}:8080
       register: e2e_netsec_allowed
       changed_when: false
       retries: 6
@@ -200,6 +235,10 @@
       until: e2e_netsec_allowed.rc == 0
   always:
     - name: "Netsec | Delete qa-e2e netpol projects"
+      register: _qa_retry_netsec_14
+      until: _qa_retry_netsec_14 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: absent
         api_version: project.openshift.io/v1
@@ -210,12 +249,16 @@
         - qa-e2e-netpol-backend
 
     - name: "Netsec | Wait for qa-e2e netpol projects to be deleted"
-      ansible.builtin.command: oc get project {{ item }}
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Namespace
+        name: '{{ item }}'
       register: command_r
-      until: command_r.rc == 1
-      failed_when: false
-      retries: 10
-      delay: 5
+      until:
+      - command_r is succeeded
+      - command_r.resources | default([]) | length == 0
+      retries: '{{ qa_namespace_delete_retries | default(60) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       loop:
         - qa-e2e-netpol-frontend
         - qa-e2e-netpol-backend

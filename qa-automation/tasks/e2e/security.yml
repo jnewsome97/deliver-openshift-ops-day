@@ -21,6 +21,10 @@
 - name: "Security | Deploy, validate, and clean up qa-e2e vulnerable workload"
   block:
     - name: "Security | Create qa-e2e-security namespace"
+      register: _qa_retry_security_1
+      until: _qa_retry_security_1 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         api_version: v1
@@ -31,6 +35,10 @@
     # target the lab's own demo-applications repo deploys, e.g. dvwa/
     # log4shell) -- reliably has known CVEs for RHACS's scanner to flag.
     - name: "Security | Deploy vulnerable qa-e2e-vuln-app workload"
+      register: _qa_retry_security_2
+      until: _qa_retry_security_2 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         definition:
@@ -78,6 +86,10 @@
           (no confirmed headless Central API credentials -- see comments).
   always:
     - name: "Security | Delete qa-e2e-security namespace"
+      register: _qa_retry_security_5
+      until: _qa_retry_security_5 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: absent
         api_version: v1

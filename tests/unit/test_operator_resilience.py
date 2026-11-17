@@ -163,7 +163,8 @@ class OperatorResilienceTests(unittest.TestCase):
             self.assertEqual(p.returncode == 0, success, out)
             self.assertNotIn('Error while evaluating conditional', out)
             self.assertNotIn('error while evaluating conditional', out)
-            state = json.loads((tmp / 'state.json').read_text())
+            state = (json.loads((tmp / 'state.json').read_text())
+                     if (tmp / 'state.json').exists() else {'counts': {}, 'calls': []})
             return state, out
 
     def metal_task(self, name):

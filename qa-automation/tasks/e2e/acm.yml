@@ -1,76 +1,55 @@
 ---
-# ACM module (module_enable_acm), content/modules/ROOT/pages/module-14-acm.adoc.
-#
-# Most of this module's hands-on flow (creating a new hcp-emea hosted cluster,
-# creating a VM through the RHACM console, wiring an ArgoCD ApplicationSet)
-# is console-click-driven and either slow (5-10 min cluster provision) or has
-# no meaningful CLI-only equivalent worth automating here -- and the
-# pre-existing managed-hcp cluster / rhel9 DataSource that flow depends on
-# are already checked by qa-automation/tasks/acm.yml. What IS a clean,
-# CLI-automatable, representative piece of this module is the GDPR policy
-# exercise ("Security Through Policy Guardrails"): apply a
-# Policy/Placement/PlacementBinding, confirm RHACM actually propagates and
-# enforces it against a managed cluster, then clean up -- that's the real
-# governance capability this module teaches.
-#
-# Target cluster: local-cluster, not managed-hcp. Live-checked on this
-# cluster: managed-hcp's governance-policy-framework and
-# config-policy-controller addons report `unreachable` (its HCP/KubeVirt
-# control plane doesn't run the full addon stack), so a policy targeted at it
-# would never reach Compliant regardless of whether policy propagation
-# itself works -- a guaranteed false failure, not a real signal. local-cluster
-# has both addons `available`, so it's the one cluster in this environment
-# where policy enforcement can actually be observed end-to-end.
-#
-# CRITICAL isolation rule: the adoc's own exercise uses the literal names
-# `policy-emea-namespace-compliance` / `placement-policy-emea-namespace-compliance`
-# / `binding-emea-namespace-compliance` (namespace `policies`) and target
-# namespaces `gdpr-workloads` / `data-residency-emea`, targeted at a cluster
-# labeled `location=emea` (the learner's own hcp-emea cluster). This sequence
-# uses qa-e2e-prefixed names throughout and targets local-cluster directly by
-# its `local-cluster=true` label instead, so it can never collide with a live
-# learner's in-progress EMEA policy exercise on the same claim.
-#
-# Unlike the student flow (remediationAction: inform, then manually flip to
-# Enforce), this sets enforce directly so the sequence is fully
-# non-interactive.
-#
-# The `policies` namespace already has a ManagedClusterSetBinding for the
-# `managed` ClusterSet (which is empty on this environment) but not for
-# `default` (the ClusterSet local-cluster actually belongs to) -- a Placement
-# can only select clusters from ClusterSets bound to its own namespace, so a
-# ManagedClusterSetBinding for `default` is created and torn down alongside
-# the policy objects. Live-verified this whole sequence end-to-end (applied,
-# watched Policy go Compliant on the first check, confirmed the namespace and
-# its labels landed, then deleted everything and confirmed no trace remained).
-#
-# Note: ManagedClusterSetBinding's name is required by RHACM's admission
-# webhook to exactly match its spec.clusterSet ("default" here, not
-# "qa-e2e-default" -- confirmed live, the webhook rejects any other name) so
-# this one object can't carry the qa-e2e- prefix. It's still safe: it only
-# grants the `policies` namespace's Placements permission to select from the
-# `default` ClusterSet and is deleted in `always` below, so it never
-# persists or collides with anything a learner does.
+# Exercise real ACM policy propagation/enforcement against local-cluster.
+# Use a private QA namespace so the required binding name "default" cannot
+# overwrite or delete a learner's existing policies/default binding.
+- name: "Acm | Inspect reserved QA policy namespace ownership"
+  until: qa_acm_namespace is succeeded
+  retries: '{{ qa_api_retries | default(12) }}'
+  delay: '{{ qa_poll_delay | default(5) }}'
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: qa-e2e-acm-policy
+  register: qa_acm_namespace
+- name: "Acm | Refuse to reuse an unowned policy namespace"
+  ansible.builtin.assert:
+    that:
+      - >-
+        qa_acm_namespace.resources | default([]) | length == 0 or
+        qa_acm_namespace.resources[0].metadata.labels.get('app.kubernetes.io/managed-by', '') == 'ops-day-e2e'
+    quiet: true
 
-- name: "Acm | Deploy, validate, and clean up qa-e2e GDPR-style policy"
+- name: "Acm | Deploy, validate, and clean up QA policy enforcement"
   block:
-    - name: "Acm | Apply qa-e2e ManagedClusterSetBinding, Policy, Placement, and PlacementBinding"
+    - name: "Acm | Apply isolated namespace, binding, Policy and Placement"
       kubernetes.core.k8s:
         state: present
         definition: "{{ item }}"
+      register: qa_acm_apply
+      until:
+      - qa_acm_apply is succeeded
+      - qa_acm_apply is succeeded
+      retries: '{{ qa_readiness_retries | default(60) }}'
+      delay: 5
       loop:
+        - apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: qa-e2e-acm-policy
+            labels:
+              app.kubernetes.io/managed-by: ops-day-e2e
         - apiVersion: cluster.open-cluster-management.io/v1beta2
           kind: ManagedClusterSetBinding
           metadata:
             name: default
-            namespace: policies
+            namespace: qa-e2e-acm-policy
           spec:
             clusterSet: default
         - apiVersion: policy.open-cluster-management.io/v1
           kind: Policy
           metadata:
             name: qa-e2e-policy-compliance
-            namespace: policies
+            namespace: qa-e2e-acm-policy
           spec:
             remediationAction: enforce
             disabled: false
@@ -97,10 +76,9 @@
           kind: Placement
           metadata:
             name: qa-e2e-placement-policy-compliance
-            namespace: policies
+            namespace: qa-e2e-acm-policy
           spec:
-            clusterSets:
-              - default
+            clusterSets: [default]
             predicates:
               - requiredClusterSelector:
                   labelSelector:
@@ -110,7 +88,7 @@
           kind: PlacementBinding
           metadata:
             name: qa-e2e-binding-policy-compliance
-            namespace: policies
+            namespace: qa-e2e-acm-policy
           placementRef:
             name: qa-e2e-placement-policy-compliance
             kind: Placement
@@ -120,52 +98,80 @@
               kind: Policy
               apiGroup: policy.open-cluster-management.io
 
-    # Propagation + enforcement to local-cluster isn't instant -- give it a
-    # bounded window rather than looping indefinitely.
-    - name: "Acm | Wait for qa-e2e policy to report Compliant"
+    - name: "Acm | Wait for enforced QA policy to become Compliant"
       kubernetes.core.k8s_info:
         api_version: policy.open-cluster-management.io/v1
         kind: Policy
         name: qa-e2e-policy-compliance
-        namespace: policies
-      register: hc_e2e_acm_policy
-      until: >-
-        hc_e2e_acm_policy.resources | default([]) | length > 0 and
-        hc_e2e_acm_policy.resources[0].status.compliant | default('') == 'Compliant'
-      retries: 12
+        namespace: qa-e2e-acm-policy
+      register: qa_acm_policy
+      until:
+      - qa_acm_policy is succeeded
+      - qa_acm_policy is succeeded
+      - qa_acm_policy.resources | default([]) | length == 1
+      - qa_acm_policy.resources[0].status.compliant | default('') == 'Compliant'
+      retries: 20
       delay: 15
-      ignore_errors: true
 
-    - name: "Acm | Record failure if qa-e2e policy never became Compliant"
-      ansible.builtin.set_fact:
-        hc_failures: "{{ hc_failures + ['acm e2e: Policy qa-e2e-policy-compliance in policies namespace never reached Compliant against local-cluster (status: ' + (hc_e2e_acm_policy.resources[0].status.compliant | default('missing')) + ')'] }}"
-      when: >-
-        hc_e2e_acm_policy is failed or
-        hc_e2e_acm_policy.resources | default([]) | length == 0 or
-        hc_e2e_acm_policy.resources[0].status.compliant | default('') != 'Compliant'
+    - name: "Acm | Verify the enforced namespace labels actually landed"
+      until: qa_acm_enforced is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Namespace
+        name: qa-e2e-gdpr-workloads
+      register: qa_acm_enforced
+      failed_when: >-
+        qa_acm_enforced.resources | default([]) | length == 0 or
+        qa_acm_enforced.resources[0].metadata.labels.get('data-classification') != 'gdpr-restricted' or
+        qa_acm_enforced.resources[0].metadata.labels.get('compliance-framework') != 'gdpr'
+
   always:
-    - name: "Acm | Delete qa-e2e PlacementBinding, Placement, Policy, and ManagedClusterSetBinding"
+    - name: "Acm | Delete the QA policy namespace first"
+      register: _qa_retry_acm_6
+      until: _qa_retry_acm_6 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: absent
-        api_version: "{{ item.api_version }}"
-        kind: "{{ item.kind }}"
-        name: "{{ item.name }}"
-        namespace: policies
-      loop:
-        - { api_version: policy.open-cluster-management.io/v1, kind: PlacementBinding, name: qa-e2e-binding-policy-compliance }
-        - { api_version: cluster.open-cluster-management.io/v1beta1, kind: Placement, name: qa-e2e-placement-policy-compliance }
-        - { api_version: policy.open-cluster-management.io/v1, kind: Policy, name: qa-e2e-policy-compliance }
-        - { api_version: cluster.open-cluster-management.io/v1beta2, kind: ManagedClusterSetBinding, name: default }
-      ignore_errors: true
+        api_version: v1
+        kind: Namespace
+        name: qa-e2e-acm-policy
 
-    # The ConfigurationPolicy's musthave namespace is created directly on
-    # local-cluster by the config-policy-controller addon, not by this
-    # playbook -- clean it up explicitly since deleting the Policy above
-    # doesn't retroactively undo what it already enforced.
-    - name: "Acm | Delete qa-e2e-gdpr-workloads namespace created by policy enforcement"
+    - name: "Acm | Wait for policy propagation cleanup before deleting its target"
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Namespace
+        name: qa-e2e-acm-policy
+      register: qa_acm_policy_deleted
+      until:
+      - qa_acm_policy_deleted is succeeded
+      - qa_acm_policy_deleted is succeeded
+      - qa_acm_policy_deleted.resources | default([]) | length == 0
+      retries: 60
+      delay: 5
+
+    - name: "Acm | Delete the enforced QA namespace after policy removal"
+      register: _qa_retry_acm_8
+      until: _qa_retry_acm_8 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: absent
         api_version: v1
         kind: Namespace
         name: qa-e2e-gdpr-workloads
-      ignore_errors: true
+
+    - name: "Acm | Wait for the enforced QA namespace to disappear"
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Namespace
+        name: qa-e2e-gdpr-workloads
+      register: qa_acm_target_deleted
+      until:
+      - qa_acm_target_deleted is succeeded
+      - qa_acm_target_deleted is succeeded
+      - qa_acm_target_deleted.resources | default([]) | length == 0
+      retries: 60
+      delay: 5

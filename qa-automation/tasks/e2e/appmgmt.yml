@@ -7,6 +7,10 @@
 # learner on the same page.
 
 - name: "Appmgmt | Delete qa-e2e-app-management project"
+  register: _qa_retry_appmgmt_0
+  until: _qa_retry_appmgmt_0 is succeeded
+  retries: '{{ qa_api_retries | default(12) }}'
+  delay: '{{ qa_poll_delay | default(5) }}'
   kubernetes.core.k8s:
     state: absent
     api_version: project.openshift.io/v1
@@ -14,16 +18,23 @@
     name: qa-e2e-app-management
 
 - name: "Appmgmt | Wait for qa-e2e-app-management project to be deleted"
-  ansible.builtin.command: oc get project qa-e2e-app-management
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: qa-e2e-app-management
   register: command_r
-  until: command_r.rc == 1
-  failed_when: false
-  retries: 10
-  delay: 5
-
+  until:
+  - command_r is succeeded
+  - command_r.resources | default([]) | length == 0
+  retries: '{{ qa_namespace_delete_retries | default(60) }}'
+  delay: '{{ qa_poll_delay | default(5) }}'
 - name: "Appmgmt | Run deploy/scale/self-heal/probe/PDB sequence"
   block:
     - name: "Appmgmt | Create qa-e2e-app-management project"
+      register: _qa_retry_appmgmt_3
+      until: _qa_retry_appmgmt_3 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         api_version: project.openshift.io/v1
@@ -31,6 +42,10 @@
         name: qa-e2e-app-management
 
     - name: "Appmgmt | Deploy weathernow app and service"
+      register: _qa_retry_appmgmt_4
+      until: _qa_retry_appmgmt_4 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         definition: "{{ item }}"
@@ -74,13 +89,17 @@
         name: weathernow
         namespace: qa-e2e-app-management
       register: e2e_appmgmt_deploy
-      until: >-
-        e2e_appmgmt_deploy.resources | default([]) | length > 0 and
-        (e2e_appmgmt_deploy.resources[0].status.readyReplicas | default(0)) >= 1
-      retries: 24
+      until:
+      - e2e_appmgmt_deploy is succeeded
+      - e2e_appmgmt_deploy.resources | default([]) | length > 0 and (e2e_appmgmt_deploy.resources[0].status.readyReplicas | default(0)) >= 1
+      retries: '{{ qa_readiness_retries | default(60) }}'
       delay: 5
 
     - name: "Appmgmt | Scale to 3 replicas"
+      register: _qa_retry_appmgmt_6
+      until: _qa_retry_appmgmt_6 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         definition:
@@ -99,11 +118,16 @@
         name: weathernow
         namespace: qa-e2e-app-management
       register: e2e_appmgmt_scaled
-      until: (e2e_appmgmt_scaled.resources[0].status.readyReplicas | default(0)) >= 3
-      retries: 24
+      until:
+      - e2e_appmgmt_scaled is succeeded
+      - (e2e_appmgmt_scaled.resources[0].status.readyReplicas | default(0)) >= 3
+      retries: '{{ qa_readiness_retries | default(60) }}'
       delay: 5
 
     - name: "Appmgmt | Get a running weathernow pod to delete for self-heal test"
+      until: e2e_appmgmt_pods_before is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s_info:
         api_version: v1
         kind: Pod
@@ -111,14 +135,39 @@
         label_selectors:
           - app=weathernow
       register: e2e_appmgmt_pods_before
-
     - name: "Appmgmt | Delete one pod to trigger self-heal"
+      register: _qa_retry_appmgmt_9
+      until: _qa_retry_appmgmt_9 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: absent
         api_version: v1
         kind: Pod
         name: "{{ e2e_appmgmt_pods_before.resources[0].metadata.name }}"
         namespace: qa-e2e-app-management
+
+    - name: "Appmgmt | Require a ready replacement rather than stale replica status"
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: qa-e2e-app-management
+        label_selectors:
+          - app=weathernow
+      register: e2e_appmgmt_replacement_pods
+      until:
+        - e2e_appmgmt_replacement_pods is succeeded
+        - e2e_appmgmt_replacement_pods.resources | default([]) | length == 3
+        - >-
+          e2e_appmgmt_pods_before.resources[0].metadata.uid not in
+          (e2e_appmgmt_replacement_pods.resources | default([]) | map(attribute='metadata.uid') | list)
+        - >-
+          e2e_appmgmt_replacement_pods.resources | default([])
+          | map(attribute='status.conditions', default=[]) | flatten
+          | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True')
+          | list | length == 3
+      retries: "{{ qa_readiness_retries | default(60) }}"
+      delay: 5
 
     - name: "Appmgmt | Confirm self-heal restores 3 ready replicas"
       kubernetes.core.k8s_info:
@@ -127,11 +176,17 @@
         name: weathernow
         namespace: qa-e2e-app-management
       register: e2e_appmgmt_healed
-      until: (e2e_appmgmt_healed.resources[0].status.readyReplicas | default(0)) >= 3
-      retries: 24
+      until:
+      - e2e_appmgmt_healed is succeeded
+      - (e2e_appmgmt_healed.resources[0].status.readyReplicas | default(0)) >= 3
+      retries: '{{ qa_readiness_retries | default(60) }}'
       delay: 5
 
     - name: "Appmgmt | Break readiness probe (wrong port)"
+      register: _qa_retry_appmgmt_11
+      until: _qa_retry_appmgmt_11 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: patched
         api_version: apps/v1
@@ -158,16 +213,17 @@
         label_selectors:
           - app=weathernow
       register: e2e_appmgmt_broken
-      until: >-
-        e2e_appmgmt_broken.resources | default([]) | length > 0 and
-        e2e_appmgmt_broken.resources
-        | selectattr('status.containerStatuses', 'defined')
-        | selectattr('status.containerStatuses.0.ready', 'equalto', false)
-        | list | length > 0
-      retries: 12
+      until:
+      - e2e_appmgmt_broken is succeeded
+      - e2e_appmgmt_broken.resources | default([]) | length > 0 and e2e_appmgmt_broken.resources | default([]) | selectattr('status.containerStatuses', 'defined') | selectattr('status.containerStatuses.0.ready', 'equalto', false) | list | length > 0
+      retries: '{{ qa_readiness_retries | default(60) }}'
       delay: 5
 
     - name: "Appmgmt | Fix readiness probe (correct port) and add liveness probe"
+      register: _qa_retry_appmgmt_13
+      until: _qa_retry_appmgmt_13 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: patched
         api_version: apps/v1
@@ -198,11 +254,17 @@
         name: weathernow
         namespace: qa-e2e-app-management
       register: e2e_appmgmt_fixed
-      until: (e2e_appmgmt_fixed.resources[0].status.readyReplicas | default(0)) >= 3
-      retries: 24
+      until:
+      - e2e_appmgmt_fixed is succeeded
+      - (e2e_appmgmt_fixed.resources[0].status.readyReplicas | default(0)) >= 3
+      retries: '{{ qa_readiness_retries | default(60) }}'
       delay: 5
 
     - name: "Appmgmt | Create PodDisruptionBudget (minAvailable=2)"
+      register: _qa_retry_appmgmt_15
+      until: _qa_retry_appmgmt_15 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         definition:
@@ -224,11 +286,17 @@
         name: weathernow
         namespace: qa-e2e-app-management
       register: e2e_appmgmt_pdb
-      until: (e2e_appmgmt_pdb.resources[0].status.disruptionsAllowed | default(-1)) >= 1
-      retries: 12
+      until:
+      - e2e_appmgmt_pdb is succeeded
+      - (e2e_appmgmt_pdb.resources[0].status.disruptionsAllowed | default(-1)) >= 1
+      retries: '{{ qa_readiness_retries | default(60) }}'
       delay: 5
 
     - name: "Appmgmt | Set minAvailable to replica count to block disruptions"
+      register: _qa_retry_appmgmt_17
+      until: _qa_retry_appmgmt_17 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: patched
         api_version: policy/v1
@@ -246,11 +314,17 @@
         name: weathernow
         namespace: qa-e2e-app-management
       register: e2e_appmgmt_pdb_blocked
-      until: (e2e_appmgmt_pdb_blocked.resources[0].status.disruptionsAllowed | default(-1)) == 0
-      retries: 12
+      until:
+      - e2e_appmgmt_pdb_blocked is succeeded
+      - (e2e_appmgmt_pdb_blocked.resources[0].status.disruptionsAllowed | default(-1)) == 0
+      retries: '{{ qa_readiness_retries | default(60) }}'
       delay: 5
   always:
     - name: "Appmgmt | Delete qa-e2e-app-management project"
+      register: _qa_retry_appmgmt_19
+      until: _qa_retry_appmgmt_19 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: absent
         api_version: project.openshift.io/v1
@@ -258,9 +332,13 @@
         name: qa-e2e-app-management
 
     - name: "Appmgmt | Wait for qa-e2e-app-management project to be deleted"
-      ansible.builtin.command: oc get project qa-e2e-app-management
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Namespace
+        name: qa-e2e-app-management
       register: command_r
-      until: command_r.rc == 1
-      failed_when: false
-      retries: 10
-      delay: 5
+      until:
+      - command_r is succeeded
+      - command_r.resources | default([]) | length == 0
+      retries: '{{ qa_namespace_delete_retries | default(60) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'

@@ -217,11 +217,13 @@ For now, **Clear** the conversation by clicking the **trash can icon** and **min
 
 Cluster updates are one of the most critical — and nerve-wracking — tasks for an ops team. OpenShift Lightspeed can analyze your cluster's health and flag potential blockers before you trigger the update, making the process more predictable and secure.
 
-Navigate to **Administration** → **Cluster Settings**. In the Details page you should see an AI assessment section indicating that updates are available.
+Navigate to **Administration** → **Cluster Settings**. If an update is offered, the Details page shows an AI assessment section.
+
+NOTE: A cluster already on the latest recommended release may have no update available. In that case this update-specific UI exercise is not applicable; continue to the next section. Do not change the cluster update feed or initiate an upgrade just to make an update appear.
 
 image::ols-cluster-update.png[AI-assisted cluster updates, link=self, window=blank]
 
-Select **Precheck your cluster with AI**. The OpenShift Lightspeed interface will open automatically and start investigating your cluster's status, assessing whether it is ready for the upgrade.
+When an update is offered, select **Precheck your cluster with AI**. The OpenShift Lightspeed interface will open automatically and start investigating your cluster's status, assessing whether it is ready for the upgrade.
 
 This was the last exercise using the OpenShift Lightspeed chatbot interface. You can now **minimize** the interface.
 

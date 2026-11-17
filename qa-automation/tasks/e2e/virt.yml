@@ -17,6 +17,10 @@
 # which isn't worth the added runtime/cluster load on every e2e run.
 
 - name: "Virt | Delete qa-e2e-vm-demo project"
+  register: _qa_retry_virt_0
+  until: _qa_retry_virt_0 is succeeded
+  retries: '{{ qa_api_retries | default(12) }}'
+  delay: '{{ qa_poll_delay | default(5) }}'
   kubernetes.core.k8s:
     state: absent
     api_version: project.openshift.io/v1
@@ -24,19 +28,23 @@
     name: qa-e2e-vm-demo
 
 - name: "Virt | Wait for qa-e2e-vm-demo project to be deleted"
-  ansible.builtin.command: oc get project qa-e2e-vm-demo
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: qa-e2e-vm-demo
   register: command_r
-  until: command_r.rc == 1
-  failed_when: false
-  retries: 10
-  delay: 5
-
-# Wrapped in block/always so a failure partway through (e.g. the VM never
-# reaches Running) still cleans up, instead of leaving a VM/disk stranded on
-# the cluster indefinitely.
+  until:
+  - command_r is succeeded
+  - command_r.resources | default([]) | length == 0
+  retries: '{{ qa_namespace_delete_retries | default(60) }}'
+  delay: '{{ qa_poll_delay | default(5) }}'
 - name: "Virt | Create, validate, and clean up qa-e2e-rhel9-vm"
   block:
     - name: "Virt | Create qa-e2e-vm-demo project"
+      register: _qa_retry_virt_3
+      until: _qa_retry_virt_3 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         api_version: project.openshift.io/v1
@@ -49,6 +57,10 @@
     # (instancetype.kubevirt.io/default-instancetype: u1.medium,
     # default-preference: rhel.9).
     - name: "Virt | Create qa-e2e-rhel9-vm VirtualMachine"
+      register: _qa_retry_virt_4
+      until: _qa_retry_virt_4 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         definition:
@@ -93,13 +105,11 @@
         name: qa-e2e-rhel9-vm
         namespace: qa-e2e-vm-demo
       register: e2e_virt_vmi
-      until: >-
-        e2e_virt_vmi.resources | default([]) | length > 0 and
-        e2e_virt_vmi.resources[0].status.phase | default('') == 'Running'
+      until:
+      - e2e_virt_vmi is succeeded
+      - e2e_virt_vmi.resources | default([]) | length > 0 and e2e_virt_vmi.resources[0].status.phase | default('') == 'Running'
       retries: 30
       delay: 10
-      ignore_errors: true
-
     - name: "Virt | Fail if VirtualMachineInstance did not reach Running"
       ansible.builtin.fail:
         msg: "virt e2e: qa-e2e-rhel9-vm VMI did not reach Running in qa-e2e-vm-demo"
@@ -112,6 +122,9 @@
     # confirm the virt-launcher pod backing this VM is actually there and
     # Running, the same way a student's `oc get pods -n vm-demo` would show.
     - name: "Virt | Get virt-launcher pod for qa-e2e-rhel9-vm"
+      until: e2e_virt_pod is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s_info:
         api_version: v1
         kind: Pod
@@ -119,7 +132,6 @@
         label_selectors:
           - vm.kubevirt.io/name=qa-e2e-rhel9-vm
       register: e2e_virt_pod
-
     - name: "Virt | Fail if virt-launcher pod is missing or not Running"
       ansible.builtin.fail:
         msg: "virt e2e: virt-launcher pod for qa-e2e-rhel9-vm not Running in qa-e2e-vm-demo"
@@ -128,6 +140,10 @@
         e2e_virt_pod.resources[0].status.phase | default('') != 'Running'
   always:
     - name: "Virt | Delete qa-e2e-vm-demo project"
+      register: _qa_retry_virt_9
+      until: _qa_retry_virt_9 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: absent
         api_version: project.openshift.io/v1
@@ -135,9 +151,13 @@
         name: qa-e2e-vm-demo
 
     - name: "Virt | Wait for qa-e2e-vm-demo project to be deleted"
-      ansible.builtin.command: oc get project qa-e2e-vm-demo
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Namespace
+        name: qa-e2e-vm-demo
       register: command_r
-      until: command_r.rc == 1
-      failed_when: false
-      retries: 10
-      delay: 5
+      until:
+      - command_r is succeeded
+      - command_r.resources | default([]) | length == 0
+      retries: '{{ qa_namespace_delete_retries | default(60) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'

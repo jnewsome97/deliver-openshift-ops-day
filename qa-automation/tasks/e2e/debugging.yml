@@ -13,6 +13,10 @@
 # this can never collide with a live learner on the same page.
 
 - name: "Debugging | Delete qa-e2e-debug-lab project"
+  register: _qa_retry_debugging_0
+  until: _qa_retry_debugging_0 is succeeded
+  retries: '{{ qa_api_retries | default(12) }}'
+  delay: '{{ qa_poll_delay | default(5) }}'
   kubernetes.core.k8s:
     state: absent
     api_version: project.openshift.io/v1
@@ -20,16 +24,23 @@
     name: qa-e2e-debug-lab
 
 - name: "Debugging | Wait for qa-e2e-debug-lab project to be deleted"
-  ansible.builtin.command: oc get project qa-e2e-debug-lab
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: qa-e2e-debug-lab
   register: command_r
-  until: command_r.rc == 1
-  failed_when: false
-  retries: 10
-  delay: 5
-
+  until:
+  - command_r is succeeded
+  - command_r.resources | default([]) | length == 0
+  retries: '{{ qa_namespace_delete_retries | default(60) }}'
+  delay: '{{ qa_poll_delay | default(5) }}'
 - name: "Debugging | Run ImagePullBackOff and CreateContainerConfigError fix sequence"
   block:
     - name: "Debugging | Create qa-e2e-debug-lab project"
+      register: _qa_retry_debugging_3
+      until: _qa_retry_debugging_3 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         api_version: project.openshift.io/v1
@@ -37,6 +48,10 @@
         name: qa-e2e-debug-lab
 
     - name: "Debugging | Deploy weather-frontend with a bad image tag"
+      register: _qa_retry_debugging_4
+      until: _qa_retry_debugging_4 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         definition:
@@ -60,6 +75,10 @@
                     image: quay.io/openshift-workshop-applications/weather-debug-app:9.9
 
     - name: "Debugging | Deploy weather-backend referencing a missing ConfigMap"
+      register: _qa_retry_debugging_5
+      until: _qa_retry_debugging_5 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         definition:
@@ -94,14 +113,10 @@
         label_selectors:
           - app=weather-frontend
       register: e2e_debugging_frontend_broken
-      until: >-
-        e2e_debugging_frontend_broken.resources | default([]) | length > 0 and
-        e2e_debugging_frontend_broken.resources[0].status.containerStatuses | default([]) | length > 0 and
-        (
-          e2e_debugging_frontend_broken.resources[0].status.containerStatuses[0].state.waiting.reason | default('')
-          in ['ImagePullBackOff', 'ErrImagePull']
-        )
-      retries: 12
+      until:
+      - e2e_debugging_frontend_broken is succeeded
+      - "e2e_debugging_frontend_broken.resources | default([]) | length > 0 and e2e_debugging_frontend_broken.resources[0].status.containerStatuses | default([]) | length > 0 and (\n  e2e_debugging_frontend_broken.resources[0].status.containerStatuses[0].state.waiting.reason\n| default('')\n  in ['ImagePullBackOff', 'ErrImagePull']\n)"
+      retries: '{{ qa_readiness_retries | default(60) }}'
       delay: 5
 
     - name: "Debugging | Confirm weather-backend hits CreateContainerConfigError"
@@ -112,15 +127,17 @@
         label_selectors:
           - app=weather-backend
       register: e2e_debugging_backend_broken
-      until: >-
-        e2e_debugging_backend_broken.resources | default([]) | length > 0 and
-        e2e_debugging_backend_broken.resources[0].status.containerStatuses | default([]) | length > 0 and
-        e2e_debugging_backend_broken.resources[0].status.containerStatuses[0].state.waiting.reason | default('')
-        == 'CreateContainerConfigError'
-      retries: 12
+      until:
+      - e2e_debugging_backend_broken is succeeded
+      - e2e_debugging_backend_broken.resources | default([]) | length > 0 and e2e_debugging_backend_broken.resources[0].status.containerStatuses | default([]) | length > 0 and e2e_debugging_backend_broken.resources[0].status.containerStatuses[0].state.waiting.reason | default('') == 'CreateContainerConfigError'
+      retries: '{{ qa_readiness_retries | default(60) }}'
       delay: 5
 
     - name: "Debugging | Fix weather-frontend image tag"
+      register: _qa_retry_debugging_8
+      until: _qa_retry_debugging_8 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: patched
         api_version: apps/v1
@@ -136,6 +153,10 @@
                     image: quay.io/openshift-workshop-applications/weather-debug-app:latest
 
     - name: "Debugging | Create the missing weather-config ConfigMap"
+      register: _qa_retry_debugging_9
+      until: _qa_retry_debugging_9 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         definition:
@@ -149,6 +170,10 @@
             CACHE_TTL: "300"
 
     - name: "Debugging | Delete weather-backend pod so it picks up the new ConfigMap"
+      register: _qa_retry_debugging_10
+      until: _qa_retry_debugging_10 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: absent
         api_version: v1
@@ -165,10 +190,10 @@
         label_selectors:
           - app=weather-frontend
       register: e2e_debugging_frontend_fixed
-      until: >-
-        e2e_debugging_frontend_fixed.resources | default([]) | length > 0 and
-        e2e_debugging_frontend_fixed.resources[0].status.phase | default('') == 'Running'
-      retries: 24
+      until:
+      - e2e_debugging_frontend_fixed is succeeded
+      - e2e_debugging_frontend_fixed.resources | default([]) | length > 0 and e2e_debugging_frontend_fixed.resources[0].status.phase | default('') == 'Running'
+      retries: '{{ qa_readiness_retries | default(60) }}'
       delay: 5
 
     - name: "Debugging | Confirm weather-backend reaches Running"
@@ -179,13 +204,17 @@
         label_selectors:
           - app=weather-backend
       register: e2e_debugging_backend_fixed
-      until: >-
-        e2e_debugging_backend_fixed.resources | default([]) | length > 0 and
-        e2e_debugging_backend_fixed.resources[0].status.phase | default('') == 'Running'
-      retries: 24
+      until:
+      - e2e_debugging_backend_fixed is succeeded
+      - e2e_debugging_backend_fixed.resources | default([]) | length > 0 and e2e_debugging_backend_fixed.resources[0].status.phase | default('') == 'Running'
+      retries: '{{ qa_readiness_retries | default(60) }}'
       delay: 5
   always:
     - name: "Debugging | Delete qa-e2e-debug-lab project"
+      register: _qa_retry_debugging_13
+      until: _qa_retry_debugging_13 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: absent
         api_version: project.openshift.io/v1
@@ -193,9 +222,13 @@
         name: qa-e2e-debug-lab
 
     - name: "Debugging | Wait for qa-e2e-debug-lab project to be deleted"
-      ansible.builtin.command: oc get project qa-e2e-debug-lab
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Namespace
+        name: qa-e2e-debug-lab
       register: command_r
-      until: command_r.rc == 1
-      failed_when: false
-      retries: 10
-      delay: 5
+      until:
+      - command_r is succeeded
+      - command_r.resources | default([]) | length == 0
+      retries: '{{ qa_namespace_delete_retries | default(60) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'

@@ -1,0 +1,210 @@
+---
+# Real analysis-only operator/LLM test. No remediation approval, execution,
+# tools, cluster update, shared adapter mutation or learner-run deletion.
+- name: "Ols | Allocate a unique QA analysis run name"
+  ansible.builtin.set_fact:
+    qa_ols_analysis_name: "qa-e2e-ols-analysis-{{ now(utc=true, fmt='%Y%m%d%H%M%S') }}"
+
+- name: "Ols | Refuse to overwrite an existing reserved analysis run"
+  kubernetes.core.k8s_info:
+    api_version: agentic.openshift.io/v1alpha1
+    kind: AgenticRun
+    name: "{{ qa_ols_analysis_name }}"
+    namespace: openshift-lightspeed
+  register: qa_ols_analysis_existing
+  until: qa_ols_analysis_existing is succeeded
+  retries: 12
+  delay: 5
+  no_log: true
+
+- name: "Ols | Require the generated QA run name to be unused"
+  ansible.builtin.assert:
+    that:
+      - qa_ols_analysis_existing.resources | default([]) | length == 0
+    quiet: true
+
+- name: "Ols | Run analysis-only inference and clean up only its own resource"
+  block:
+    - name: "Ols | Create QA-owned advisory AgenticRun"
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: agentic.openshift.io/v1alpha1
+          kind: AgenticRun
+          metadata:
+            name: "{{ qa_ols_analysis_name }}"
+            namespace: openshift-lightspeed
+            labels:
+              app.kubernetes.io/managed-by: ops-day-e2e
+              qa.ops-day/run: "{{ qa_ols_analysis_name }}"
+          spec:
+            analysis:
+              agent: default
+            analysisOutput:
+              mode: Minimal
+              schema:
+                type: object
+                properties:
+                  qaStatus:
+                    type: string
+                    enum: [ok]
+                required: [qaStatus]
+                additionalProperties: false
+            request: >-
+              QA analysis-only smoke test. Explain briefly what an AgenticRun
+              is and set components.qaStatus to ok. Do not inspect or change
+              cluster resources. No execution or verification is requested.
+            terminalTTL: 1
+      register: qa_ols_analysis_created
+      until: qa_ols_analysis_created is succeeded
+      retries: 12
+      delay: 5
+      no_log: true
+
+    - name: "Ols | Wait for the controller-owned approval record"
+      kubernetes.core.k8s_info:
+        api_version: agentic.openshift.io/v1alpha1
+        kind: AgenticRunApproval
+        name: "{{ qa_ols_analysis_name }}"
+        namespace: openshift-lightspeed
+      register: qa_ols_approval_record
+      until:
+        - qa_ols_approval_record is succeeded
+        - qa_ols_approval_record.resources | default([]) | length == 1
+      retries: 30
+      delay: 2
+      no_log: true
+
+    - name: "Ols | Verify QA ownership and analysis-only approval scope"
+      ansible.builtin.assert:
+        that:
+          - qa_ols_analysis_created.result.metadata.labels.get('qa.ops-day/run', '') == qa_ols_analysis_name
+          - qa_ols_analysis_created.result.spec.analysisOutput.mode == 'Minimal'
+          - qa_ols_analysis_created.result.spec.execution is not defined
+          - qa_ols_analysis_created.result.spec.verification is not defined
+          - qa_ols_analysis_created.result.spec.tools is not defined
+          - >-
+            qa_ols_approval_record.resources[0].metadata.ownerReferences
+            | selectattr('uid', 'equalto', qa_ols_analysis_created.result.metadata.uid)
+            | selectattr('kind', 'equalto', 'AgenticRun') | list | length == 1
+          - >-
+            qa_ols_approval_record.resources[0].spec.stages | default([])
+            | rejectattr('type', 'equalto', 'Analysis') | list | length == 0
+          - >-
+            qa_ols_approval_record.resources[0].spec.stages | default([])
+            | selectattr('decision', 'defined') | selectattr('decision', 'equalto', 'Denied')
+            | list | length == 0
+        quiet: true
+
+    - name: "Ols | Approve only Analysis for the owned advisory QA run"
+      kubernetes.core.k8s:
+        state: patched
+        api_version: agentic.openshift.io/v1alpha1
+        kind: AgenticRunApproval
+        name: "{{ qa_ols_analysis_name }}"
+        namespace: openshift-lightspeed
+        definition:
+          spec:
+            stages:
+              - type: Analysis
+                decision: Approved
+                analysis: {}
+      register: qa_ols_analysis_approved
+      until: qa_ols_analysis_approved is succeeded
+      retries: 12
+      delay: 5
+      no_log: true
+
+    - name: "Ols | Wait for real analysis inference to finish"
+      kubernetes.core.k8s_info:
+        api_version: agentic.openshift.io/v1alpha1
+        kind: AgenticRun
+        name: "{{ qa_ols_analysis_name }}"
+        namespace: openshift-lightspeed
+      register: qa_ols_analysis_observed
+      vars:
+        _qa_run_status: >-
+          {{ (qa_ols_analysis_observed.resources | default([]) | first | default({})).get('status', {}) }}
+        _qa_analysis_results: "{{ _qa_run_status.get('steps', {}).get('analysis', {}).get('results', []) }}"
+      until:
+        - qa_ols_analysis_observed is succeeded
+        - qa_ols_analysis_observed.resources | default([]) | length == 1
+        - >-
+          _qa_run_status.get('terminalTime', '') | length > 0 or
+          (_qa_analysis_results | length > 0 and _qa_analysis_results[-1].outcome == 'Failed')
+      retries: "{{ qa_agentic_analysis_retries | default(90) }}"
+      delay: "{{ qa_agentic_analysis_delay | default(10) }}"
+      no_log: true
+
+    - name: "Ols | Require successful analysis with no execution or verification"
+      ansible.builtin.assert:
+        that:
+          - _qa_status.get('terminalTime', '') | length > 0
+          - _qa_results | length > 0
+          - (_qa_results | last | default({})).get('outcome', '') == 'Succeeded'
+          - _qa_status.get('steps', {}).get('execution', {}).get('results', []) | length == 0
+          - _qa_status.get('steps', {}).get('verification', {}).get('results', []) | length == 0
+        quiet: true
+        fail_msg: "The QA-owned analysis-only AgenticRun did not complete successfully."
+      vars:
+        _qa_status: "{{ qa_ols_analysis_observed.resources[0].status | default({}) }}"
+        _qa_results: "{{ _qa_status.get('steps', {}).get('analysis', {}).get('results', []) }}"
+
+  always:
+    - name: "Ols | Read QA run ownership before cleanup"
+      kubernetes.core.k8s_info:
+        api_version: agentic.openshift.io/v1alpha1
+        kind: AgenticRun
+        name: "{{ qa_ols_analysis_name }}"
+        namespace: openshift-lightspeed
+      register: qa_ols_cleanup_run
+      until: qa_ols_cleanup_run is succeeded
+      retries: 12
+      delay: 5
+      no_log: true
+
+    - name: "Ols | Report sanitized QA analysis outcome before cleanup"
+      ansible.builtin.debug:
+        msg:
+          name: "{{ qa_ols_analysis_name }}"
+          terminal: "{{ _qa_cleanup_status.get('terminalTime', '') | length > 0 }}"
+          reasons: "{{ _qa_cleanup_status.get('conditions', []) | map(attribute='reason', default='unknown') | list }}"
+          analysis_outcomes: "{{ _qa_cleanup_status.get('steps', {}).get('analysis', {}).get('results', []) | map(attribute='outcome') | list }}"
+      vars:
+        _qa_cleanup_status: "{{ (qa_ols_cleanup_run.resources | default([]) | first | default({})).get('status', {}) | default({}, true) }}"
+
+    - name: "Ols | Refuse to delete an AgenticRun not owned by this QA run"
+      ansible.builtin.assert:
+        that:
+          - >-
+            qa_ols_cleanup_run.resources | default([]) | length == 0 or
+            qa_ols_cleanup_run.resources[0].metadata.labels.get('qa.ops-day/run', '') == qa_ols_analysis_name
+        quiet: true
+
+    - name: "Ols | Delete only this QA-owned AgenticRun"
+      kubernetes.core.k8s:
+        state: absent
+        api_version: agentic.openshift.io/v1alpha1
+        kind: AgenticRun
+        name: "{{ qa_ols_analysis_name }}"
+        namespace: openshift-lightspeed
+      when: qa_ols_cleanup_run.resources | default([]) | length > 0
+      register: qa_ols_cleanup_deleted
+      until: qa_ols_cleanup_deleted is succeeded
+      retries: 12
+      delay: 5
+      no_log: true
+
+    - name: "Ols | Wait for QA analysis resource cleanup without forcing finalizers"
+      kubernetes.core.k8s_info:
+        api_version: agentic.openshift.io/v1alpha1
+        kind: AgenticRun
+        name: "{{ qa_ols_analysis_name }}"
+        namespace: openshift-lightspeed
+      register: qa_ols_cleanup_gone
+      until:
+        - qa_ols_cleanup_gone is succeeded
+        - qa_ols_cleanup_gone.resources | default([]) | length == 0
+      retries: 60
+      delay: 5
+      no_log: true

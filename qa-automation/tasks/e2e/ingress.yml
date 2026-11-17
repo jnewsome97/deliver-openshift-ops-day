@@ -13,6 +13,10 @@
 # name so this can never collide with a live learner on the same page.
 
 - name: "Ingress | Delete qa-e2e-ingress-demo project"
+  register: _qa_retry_ingress_0
+  until: _qa_retry_ingress_0 is succeeded
+  retries: '{{ qa_api_retries | default(12) }}'
+  delay: '{{ qa_poll_delay | default(5) }}'
   kubernetes.core.k8s:
     state: absent
     api_version: project.openshift.io/v1
@@ -20,16 +24,23 @@
     name: qa-e2e-ingress-demo
 
 - name: "Ingress | Wait for qa-e2e-ingress-demo project to be deleted"
-  ansible.builtin.command: oc get project qa-e2e-ingress-demo
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: qa-e2e-ingress-demo
   register: command_r
-  until: command_r.rc == 1
-  failed_when: false
-  retries: 10
-  delay: 5
-
+  until:
+  - command_r is succeeded
+  - command_r.resources | default([]) | length == 0
+  retries: '{{ qa_namespace_delete_retries | default(60) }}'
+  delay: '{{ qa_poll_delay | default(5) }}'
 - name: "Ingress | Run route/redirect/HSTS sequence"
   block:
     - name: "Ingress | Create qa-e2e-ingress-demo project"
+      register: _qa_retry_ingress_3
+      until: _qa_retry_ingress_3 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         api_version: project.openshift.io/v1
@@ -37,6 +48,10 @@
         name: qa-e2e-ingress-demo
 
     - name: "Ingress | Deploy test-app and service"
+      register: _qa_retry_ingress_4
+      until: _qa_retry_ingress_4 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         definition: "{{ item }}"
@@ -91,10 +106,10 @@
         name: test-app
         namespace: qa-e2e-ingress-demo
       register: e2e_ingress_deploy
-      until: >-
-        e2e_ingress_deploy.resources | default([]) | length > 0 and
-        (e2e_ingress_deploy.resources[0].status.readyReplicas | default(0)) >= 1
-      retries: 24
+      until:
+      - e2e_ingress_deploy is succeeded
+      - e2e_ingress_deploy.resources | default([]) | length > 0 and (e2e_ingress_deploy.resources[0].status.readyReplicas | default(0)) >= 1
+      retries: '{{ qa_readiness_retries | default(60) }}'
       delay: 5
 
     - name: "Ingress | Get Route host"
@@ -104,10 +119,10 @@
         name: test-app
         namespace: qa-e2e-ingress-demo
       register: e2e_ingress_route
-      until: >-
-        e2e_ingress_route.resources | default([]) | length > 0 and
-        e2e_ingress_route.resources[0].status.ingress | default([]) | length > 0
-      retries: 12
+      until:
+      - e2e_ingress_route is succeeded
+      - e2e_ingress_route.resources | default([]) | length > 0 and e2e_ingress_route.resources[0].status.ingress | default([]) | length > 0
+      retries: '{{ qa_readiness_retries | default(60) }}'
       delay: 5
 
     - name: "Ingress | Confirm HTTPS request succeeds before redirect is configured"
@@ -121,6 +136,10 @@
       until: e2e_ingress_pre is success
 
     - name: "Ingress | Enable HTTP -> HTTPS redirect"
+      register: _qa_retry_ingress_8
+      until: _qa_retry_ingress_8 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: patched
         api_version: route.openshift.io/v1
@@ -144,6 +163,10 @@
       until: e2e_ingress_redirect is success
 
     - name: "Ingress | Apply HSTS header annotation"
+      register: _qa_retry_ingress_10
+      until: _qa_retry_ingress_10 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: patched
         api_version: route.openshift.io/v1
@@ -174,6 +197,10 @@
       when: e2e_ingress_hsts.strict_transport_security is not defined
   always:
     - name: "Ingress | Delete qa-e2e-ingress-demo project"
+      register: _qa_retry_ingress_13
+      until: _qa_retry_ingress_13 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: absent
         api_version: project.openshift.io/v1
@@ -181,9 +208,13 @@
         name: qa-e2e-ingress-demo
 
     - name: "Ingress | Wait for qa-e2e-ingress-demo project to be deleted"
-      ansible.builtin.command: oc get project qa-e2e-ingress-demo
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Namespace
+        name: qa-e2e-ingress-demo
       register: command_r
-      until: command_r.rc == 1
-      failed_when: false
-      retries: 10
-      delay: 5
+      until:
+      - command_r is succeeded
+      - command_r.resources | default([]) | length == 0
+      retries: '{{ qa_namespace_delete_retries | default(60) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'

@@ -83,6 +83,10 @@
 - name: "Devhub | Create, verify, and clean up qa-e2e-devhub-demo label-contract check"
   block:
     - name: "Devhub | Create qa-e2e-devhub-demo namespace"
+      register: _qa_retry_devhub_5
+      until: _qa_retry_devhub_5 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         api_version: v1
@@ -90,6 +94,10 @@
         name: qa-e2e-devhub-demo
 
     - name: "Devhub | Deploy demo app with mismatched backstage.io/kubernetes-id label"
+      register: _qa_retry_devhub_6
+      until: _qa_retry_devhub_6 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         definition:
@@ -158,6 +166,10 @@
       failed_when: label_after_r.stdout | trim != 'qa-e2e-devhub-demo'
   always:
     - name: "Devhub | Delete qa-e2e-devhub-demo namespace"
+      register: _qa_retry_devhub_10
+      until: _qa_retry_devhub_10 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: absent
         api_version: v1

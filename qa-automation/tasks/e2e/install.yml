@@ -8,6 +8,10 @@
 # learner working through install-test/storage-test on the same page.
 
 - name: "Install | Delete qa-e2e-install-test project"
+  register: _qa_retry_install_0
+  until: _qa_retry_install_0 is succeeded
+  retries: '{{ qa_api_retries | default(12) }}'
+  delay: '{{ qa_poll_delay | default(5) }}'
   kubernetes.core.k8s:
     state: absent
     api_version: project.openshift.io/v1
@@ -15,16 +19,23 @@
     name: qa-e2e-install-test
 
 - name: "Install | Wait for qa-e2e-install-test project to be deleted"
-  ansible.builtin.command: oc get project qa-e2e-install-test
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: qa-e2e-install-test
   register: command_r
-  until: command_r.rc == 1
-  failed_when: false
-  retries: 10
-  delay: 5
-
+  until:
+  - command_r is succeeded
+  - command_r.resources | default([]) | length == 0
+  retries: '{{ qa_namespace_delete_retries | default(60) }}'
+  delay: '{{ qa_poll_delay | default(5) }}'
 - name: "Install | Create, validate, and clean up qa-e2e-install-test"
   block:
     - name: "Install | Create qa-e2e-install-test project"
+      register: _qa_retry_install_3
+      until: _qa_retry_install_3 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         api_version: project.openshift.io/v1
@@ -32,6 +43,10 @@
         name: qa-e2e-install-test
 
     - name: "Install | Deploy test-app, PVC, and storage-writer pod"
+      register: _qa_retry_install_4
+      until: _qa_retry_install_4 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         definition: "{{ item }}"
@@ -122,10 +137,10 @@
         name: test-app
         namespace: qa-e2e-install-test
       register: e2e_install_deploy
-      until: >-
-        e2e_install_deploy.resources | default([]) | length > 0 and
-        (e2e_install_deploy.resources[0].status.readyReplicas | default(0)) >= 1
-      retries: 24
+      until:
+      - e2e_install_deploy is succeeded
+      - e2e_install_deploy.resources | default([]) | length > 0 and (e2e_install_deploy.resources[0].status.readyReplicas | default(0)) >= 1
+      retries: '{{ qa_readiness_retries | default(60) }}'
       delay: 5
 
     - name: "Install | Wait for Route to admit"
@@ -135,10 +150,10 @@
         name: test-app
         namespace: qa-e2e-install-test
       register: e2e_install_route
-      until: >-
-        e2e_install_route.resources | default([]) | length > 0 and
-        e2e_install_route.resources[0].status.ingress | default([]) | length > 0
-      retries: 12
+      until:
+      - e2e_install_route is succeeded
+      - e2e_install_route.resources | default([]) | length > 0 and e2e_install_route.resources[0].status.ingress | default([]) | length > 0
+      retries: '{{ qa_readiness_retries | default(60) }}'
       delay: 5
 
     - name: "Install | curl the route to prove DNS/router/TLS work end-to-end"
@@ -158,20 +173,22 @@
         name: test-storage
         namespace: qa-e2e-install-test
       register: e2e_install_pod
-      until: >-
-        e2e_install_pod.resources | default([]) | length > 0 and
-        e2e_install_pod.resources[0].status.phase | default('') in ['Running', 'Succeeded']
-      retries: 24
+      until:
+      - e2e_install_pod is succeeded
+      - e2e_install_pod.resources | default([]) | length > 0 and e2e_install_pod.resources[0].status.phase | default('') in ['Running', 'Succeeded']
+      retries: '{{ qa_readiness_retries | default(60) }}'
       delay: 5
 
     - name: "Install | Confirm the PVC bound"
+      until: e2e_install_pvc is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s_info:
         api_version: v1
         kind: PersistentVolumeClaim
         name: test-pvc
         namespace: qa-e2e-install-test
       register: e2e_install_pvc
-
     - name: "Install | Fail if PVC did not bind"
       ansible.builtin.fail:
         msg: "install e2e: test-pvc did not reach Bound in qa-e2e-install-test"
@@ -180,6 +197,10 @@
         e2e_install_pvc.resources[0].status.phase | default('') != 'Bound'
   always:
     - name: "Install | Delete qa-e2e-install-test project"
+      register: _qa_retry_install_11
+      until: _qa_retry_install_11 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: absent
         api_version: project.openshift.io/v1
@@ -187,9 +208,13 @@
         name: qa-e2e-install-test
 
     - name: "Install | Wait for qa-e2e-install-test project to be deleted"
-      ansible.builtin.command: oc get project qa-e2e-install-test
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Namespace
+        name: qa-e2e-install-test
       register: command_r
-      until: command_r.rc == 1
-      failed_when: false
-      retries: 10
-      delay: 5
+      until:
+      - command_r is succeeded
+      - command_r.resources | default([]) | length == 0
+      retries: '{{ qa_namespace_delete_retries | default(60) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'

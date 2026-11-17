@@ -33,45 +33,46 @@
 
 # -- Configure Vault (idempotent -- safe even if a learner already did this) -
 
-- name: "Vault | Enable Kubernetes auth method"
-  ansible.builtin.command: >-
-    oc exec -n vault vault-0 -- sh -c
-    "VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=root vault auth enable kubernetes"
-  register: vault_auth_enable
-  changed_when: "'Success' in vault_auth_enable.stdout"
-  failed_when: >-
-    vault_auth_enable.rc != 0 and
-    'already in use' not in vault_auth_enable.stderr
-
-- name: "Vault | Configure Kubernetes auth backend"
-  ansible.builtin.command: >-
-    oc exec -n vault vault-0 -- sh -c
-    "VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=root vault write auth/kubernetes/config
-    token_reviewer_jwt=\"$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)\"
-    kubernetes_host=\"https://kubernetes.default.svc:443\"
-    kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
-  register: vault_auth_config
-  changed_when: true
-  failed_when: vault_auth_config.rc != 0
-
-- name: "Vault | Enable KV v2 secrets engine at secret/"
-  ansible.builtin.command: >-
-    oc exec -n vault vault-0 -- sh -c
-    "VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=root vault secrets enable -path=secret kv-v2 2>/dev/null || true"
-  changed_when: false
-
-- name: "Vault | Get Vault pod service account audience"
-  ansible.builtin.command: >-
-    oc exec -n vault vault-0 -- sh -c
-    "cat /var/run/secrets/kubernetes.io/serviceaccount/token | cut -d. -f2 | base64 -d 2>/dev/null | sed -n 's/.*\"aud\":\[\"\([^\"]*\)\".*/\1/p'"
-  register: vault_aud
-  changed_when: false
-  failed_when: vault_aud.rc != 0 or vault_aud.stdout | length == 0
-
 # -- Agent Injector pattern: qa-e2e secret + policy + role + app -----------
 
 - name: "Vault | Deploy, validate, and clean up Agent Injector pattern"
   block:
+    - name: "Vault | Enable Kubernetes auth method"
+      ansible.builtin.command: >-
+        oc exec -n vault vault-0 -- sh -c
+        "VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=root vault auth enable -path=qa-e2e-kubernetes kubernetes"
+      register: vault_auth_enable
+      changed_when: "'Success' in vault_auth_enable.stdout"
+      failed_when: >-
+        vault_auth_enable.rc != 0 and
+        'already in use' not in vault_auth_enable.stderr
+
+    - name: "Vault | Configure Kubernetes auth backend"
+      no_log: true
+      ansible.builtin.command: >-
+        oc exec -n vault vault-0 -- sh -c
+        "VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=root vault write auth/qa-e2e-kubernetes/config
+        token_reviewer_jwt=\"$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)\"
+        kubernetes_host=\"https://kubernetes.default.svc:443\"
+        kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+      register: vault_auth_config
+      changed_when: true
+      failed_when: vault_auth_config.rc != 0
+
+    - name: "Vault | Enable KV v2 secrets engine at secret/"
+      ansible.builtin.command: >-
+        oc exec -n vault vault-0 -- sh -c
+        "VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=root vault secrets enable -path=secret kv-v2 2>/dev/null || true"
+      changed_when: false
+
+    - name: "Vault | Get Vault pod service account audience"
+      ansible.builtin.command: >-
+        oc exec -n vault vault-0 -- sh -c
+        "cat /var/run/secrets/kubernetes.io/serviceaccount/token | cut -d. -f2 | base64 -d 2>/dev/null | sed -n 's/.*\"aud\":\[\"\([^\"]*\)\".*/\1/p'"
+      register: vault_aud
+      changed_when: false
+      failed_when: vault_aud.rc != 0 or vault_aud.stdout | length == 0
+
     - name: "Vault | Write qa-e2e test secret"
       ansible.builtin.command: >-
         oc exec -n vault vault-0 -- sh -c
@@ -90,7 +91,7 @@
     - name: "Vault | Create qa-e2e Kubernetes auth role"
       ansible.builtin.command: >-
         oc exec -n vault vault-0 -- sh -c
-        "VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=root vault write auth/kubernetes/role/qa-e2e-vault-role
+        "VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=root vault write auth/qa-e2e-kubernetes/role/qa-e2e-vault-role
         bound_service_account_names=qa-e2e-vault-sa
         bound_service_account_namespaces=vault
         policies=qa-e2e-read-policy
@@ -101,6 +102,10 @@
       failed_when: qa_e2e_role_write.rc != 0
 
     - name: "Vault | Deploy qa-e2e Agent Injector consumer app"
+      register: _qa_retry_vault_8
+      until: _qa_retry_vault_8 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         definition:
@@ -129,6 +134,7 @@
                     vault.hashicorp.com/agent-inject: "true"
                     vault.hashicorp.com/agent-inject-status: "update"
                     vault.hashicorp.com/role: "qa-e2e-vault-role"
+                    vault.hashicorp.com/auth-path: "auth/qa-e2e-kubernetes"
                     vault.hashicorp.com/agent-inject-address: "http://vault.vault.svc:8200"
                     vault.hashicorp.com/agent-inject-secret-qa-e2e: "secret/qa-e2e-test-secret"
                     # {% raw %} protects HashiCorp's own Consul-Template syntax
@@ -155,13 +161,16 @@
         name: qa-e2e-vault-injector-app
         namespace: vault
       register: qa_e2e_injector_deploy
-      until: >-
-        qa_e2e_injector_deploy.resources | default([]) | length > 0 and
-        (qa_e2e_injector_deploy.resources[0].status.readyReplicas | default(0) | int) >= 1
-      retries: 15
+      until:
+      - qa_e2e_injector_deploy is succeeded
+      - qa_e2e_injector_deploy.resources | default([]) | length > 0 and (qa_e2e_injector_deploy.resources[0].status.readyReplicas | default(0) | int) >= 1
+      retries: 60
       delay: 5
 
     - name: "Vault | Get qa-e2e Agent Injector pod"
+      until: qa_e2e_injector_pod is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s_info:
         api_version: v1
         kind: Pod
@@ -182,27 +191,31 @@
         'password=qa-e2e-password' not in qa_e2e_injected_content.stdout
   always:
     - name: "Vault | Delete qa-e2e Agent Injector app and service account"
+      register: _qa_retry_vault_12
+      until: _qa_retry_vault_12 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: absent
         api_version: apps/v1
         kind: Deployment
         name: qa-e2e-vault-injector-app
         namespace: vault
-      ignore_errors: true
-
     - name: "Vault | Delete qa-e2e Agent Injector service account"
+      register: _qa_retry_vault_13
+      until: _qa_retry_vault_13 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: absent
         api_version: v1
         kind: ServiceAccount
         name: qa-e2e-vault-sa
         namespace: vault
-      ignore_errors: true
-
     - name: "Vault | Delete qa-e2e Kubernetes auth role"
       ansible.builtin.command: >-
         oc exec -n vault vault-0 -- sh -c
-        "VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=root vault delete auth/kubernetes/role/qa-e2e-vault-role"
+        "VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=root vault delete auth/qa-e2e-kubernetes/role/qa-e2e-vault-role"
       ignore_errors: true
       changed_when: true
 
@@ -218,6 +231,12 @@
         oc exec -n vault vault-0 -- sh -c
         "VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=root vault kv metadata delete secret/qa-e2e-test-secret"
       ignore_errors: true
+      changed_when: true
+
+    - name: "Vault | Remove only the QA Kubernetes auth mount"
+      ansible.builtin.command: >-
+        oc exec -n vault vault-0 -- sh -c
+        "VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=root vault auth disable qa-e2e-kubernetes"
       changed_when: true
 
 # -- External Secrets Operator pattern: qa-e2e SecretStore + ExternalSecret -
@@ -298,13 +317,18 @@
         label_selectors:
           - app.kubernetes.io/name=external-secrets
       register: eso_deploy
-      until: >-
-        eso_deploy.resources | default([]) | length > 0 and
-        (eso_deploy.resources[0].status.readyReplicas | default(0) | int) >= 1
-      retries: 20
+      until:
+      - eso_deploy is succeeded
+      - eso_deploy.resources | default([]) | length > 0 and (eso_deploy.resources[0].status.readyReplicas | default(0) | int) >= 1
+      retries: '{{ qa_readiness_retries | default(60) }}'
       delay: 5
 
     - name: "Vault | Apply qa-e2e vault token, SecretStore, and ExternalSecret"
+      register: _qa_retry_vault_30
+      until: _qa_retry_vault_30 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
+      no_log: true
       kubernetes.core.k8s:
         state: present
         definition:
@@ -355,24 +379,24 @@
                     property: password
 
     - name: "Vault | Wait for qa-e2e ExternalSecret to be Ready"
+      no_log: true
       kubernetes.core.k8s_info:
         api_version: external-secrets.io/v1
         kind: ExternalSecret
         name: qa-e2e-sync-secret
         namespace: vault
       register: qa_e2e_es
-      until: >-
-        qa_e2e_es.resources | default([]) | length > 0 and
-        (
-          qa_e2e_es.resources[0].status.conditions | default([])
-          | selectattr('type', 'equalto', 'Ready')
-          | selectattr('status', 'equalto', 'True')
-          | list | length > 0
-        )
-      retries: 15
+      until:
+      - qa_e2e_es is succeeded
+      - "qa_e2e_es.resources | default([]) | length > 0 and (\n  qa_e2e_es.resources[0].status.conditions | default([])\n  | selectattr('type', 'equalto', 'Ready')\n  | selectattr('status', 'equalto', 'True')\n  | list | length > 0\n)"
+      retries: '{{ qa_readiness_retries | default(60) }}'
       delay: 5
 
     - name: "Vault | Get qa-e2e synced Secret"
+      until: qa_e2e_synced_secret is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
+      no_log: true
       kubernetes.core.k8s_info:
         api_version: v1
         kind: Secret
@@ -390,27 +414,36 @@
     # after ESO's controller was already removed. The Helm release itself is
     # intentionally left installed (see header comment).
     - name: "Vault | Delete qa-e2e ExternalSecret"
+      register: _qa_retry_vault_33
+      until: _qa_retry_vault_33 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
+      no_log: true
       kubernetes.core.k8s:
         state: absent
         api_version: external-secrets.io/v1
         kind: ExternalSecret
         name: qa-e2e-sync-secret
         namespace: vault
-      ignore_errors: true
-
     - name: "Vault | Wait for qa-e2e ExternalSecret finalizer to clear"
+      no_log: true
       kubernetes.core.k8s_info:
         api_version: external-secrets.io/v1
         kind: ExternalSecret
         name: qa-e2e-sync-secret
         namespace: vault
       register: qa_e2e_es_deleted
-      until: qa_e2e_es_deleted.resources | default([]) | length == 0
-      retries: 12
+      until:
+      - qa_e2e_es_deleted is succeeded
+      - qa_e2e_es_deleted.resources | default([]) | length == 0
+      retries: '{{ qa_readiness_retries | default(60) }}'
       delay: 5
-      ignore_errors: true
-
     - name: "Vault | Delete qa-e2e SecretStore, token Secret, and synced Secret"
+      register: _qa_retry_vault_35
+      until: _qa_retry_vault_35 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
+      no_log: true
       kubernetes.core.k8s:
         state: absent
         api_version: "{{ item.api_version }}"
@@ -421,8 +454,6 @@
         - { api_version: "external-secrets.io/v1", kind: SecretStore, name: qa-e2e-vault-backend }
         - { api_version: v1, kind: Secret, name: qa-e2e-vault-token }
         - { api_version: v1, kind: Secret, name: qa-e2e-secret-sync }
-      ignore_errors: true
-
     - name: "Vault | Delete qa-e2e ESO test secret"
       ansible.builtin.command: >-
         oc exec -n vault vault-0 -- sh -c

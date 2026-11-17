@@ -16,6 +16,10 @@
 # collide with a live learner on the same page.
 
 - name: "Observability | Delete qa-e2e-observability-alert project"
+  register: _qa_retry_observability_0
+  until: _qa_retry_observability_0 is succeeded
+  retries: '{{ qa_api_retries | default(12) }}'
+  delay: '{{ qa_poll_delay | default(5) }}'
   kubernetes.core.k8s:
     state: absent
     api_version: project.openshift.io/v1
@@ -23,6 +27,10 @@
     name: qa-e2e-observability-alert
 
 - name: "Observability | Delete qa-e2e-alert-test PrometheusRule"
+  register: _qa_retry_observability_1
+  until: _qa_retry_observability_1 is succeeded
+  retries: '{{ qa_api_retries | default(12) }}'
+  delay: '{{ qa_poll_delay | default(5) }}'
   kubernetes.core.k8s:
     state: absent
     api_version: monitoring.coreos.com/v1
@@ -31,16 +39,23 @@
     namespace: openshift-monitoring
 
 - name: "Observability | Wait for qa-e2e-observability-alert project to be deleted"
-  ansible.builtin.command: oc get project qa-e2e-observability-alert
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: qa-e2e-observability-alert
   register: command_r
-  until: command_r.rc == 1
-  failed_when: false
-  retries: 10
-  delay: 5
-
+  until:
+  - command_r is succeeded
+  - command_r.resources | default([]) | length == 0
+  retries: '{{ qa_namespace_delete_retries | default(60) }}'
+  delay: '{{ qa_poll_delay | default(5) }}'
 - name: "Observability | Run custom alert create/trigger/fire sequence"
   block:
     - name: "Observability | Create qa-e2e-observability-alert project"
+      register: _qa_retry_observability_4
+      until: _qa_retry_observability_4 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         api_version: project.openshift.io/v1
@@ -48,6 +63,10 @@
         name: qa-e2e-observability-alert
 
     - name: "Observability | Create custom HighPodRestartRate-style PrometheusRule"
+      register: _qa_retry_observability_5
+      until: _qa_retry_observability_5 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         definition:
@@ -70,6 +89,10 @@
                       summary: "qa-e2e test pod restarting frequently"
 
     - name: "Observability | Deploy a crash-looping pod to trigger the rule"
+      register: _qa_retry_observability_6
+      until: _qa_retry_observability_6 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: present
         definition:
@@ -92,30 +115,36 @@
         name: qa-e2e-crashloop-test
         namespace: qa-e2e-observability-alert
       register: e2e_observability_pod
-      until: >-
-        e2e_observability_pod.resources | default([]) | length > 0 and
-        (e2e_observability_pod.resources[0].status.containerStatuses[0].restartCount | default(0)) >= 3
-      retries: 24
+      until:
+      - e2e_observability_pod is succeeded
+      - e2e_observability_pod.resources | default([]) | length > 0 and (e2e_observability_pod.resources[0].status.containerStatuses[0].restartCount | default(0)) >= 3
+      retries: '{{ qa_readiness_retries | default(30) }}'
       delay: 10
 
-    - name: "Observability | Query Thanos Querier for the alert (Firing or Pending)"
+    - name: "Observability | Require the test alert to reach Firing in Thanos"
       ansible.builtin.uri:
         url: >-
-          https://thanos-querier.openshift-monitoring.svc:9091/api/v1/query?query=ALERTS{alertname="QaE2eHighPodRestartRate"}
+          https://{{ thanos_host }}/api/v1/query?query={{ 'ALERTS{alertname="QaE2eHighPodRestartRate",alertstate="firing"}' | urlencode }}
         method: GET
         validate_certs: false
         headers:
-          Authorization: "Bearer {{ lookup('ansible.builtin.file', k8s_kubeconfig) | regex_search('token:\\s*(\\S+)', '\\1') | first | default('') }}"
+          Authorization: "Bearer {{ thanos_token }}"
         return_content: true
       register: e2e_observability_alert_query
-      ignore_errors: true
-      retries: 18
+      no_log: true
+      retries: 60
       delay: 10
-      until: >-
-        e2e_observability_alert_query is success and
-        'QaE2eHighPodRestartRate' in (e2e_observability_alert_query.content | default(''))
+      until:
+        - e2e_observability_alert_query is succeeded
+        - e2e_observability_alert_query.status | default(0) == 200
+        - e2e_observability_alert_query.json.status | default('') == 'success'
+        - e2e_observability_alert_query.json.data.result | default([]) | length > 0
   always:
     - name: "Observability | Delete qa-e2e-observability-alert project"
+      register: _qa_retry_observability_9
+      until: _qa_retry_observability_9 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: absent
         api_version: project.openshift.io/v1
@@ -123,6 +152,10 @@
         name: qa-e2e-observability-alert
 
     - name: "Observability | Delete qa-e2e-alert-test PrometheusRule"
+      register: _qa_retry_observability_10
+      until: _qa_retry_observability_10 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: absent
         api_version: monitoring.coreos.com/v1
@@ -131,9 +164,13 @@
         namespace: openshift-monitoring
 
     - name: "Observability | Wait for qa-e2e-observability-alert project to be deleted"
-      ansible.builtin.command: oc get project qa-e2e-observability-alert
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Namespace
+        name: qa-e2e-observability-alert
       register: command_r
-      until: command_r.rc == 1
-      failed_when: false
-      retries: 10
-      delay: 5
+      until:
+      - command_r is succeeded
+      - command_r.resources | default([]) | length == 0
+      retries: '{{ qa_namespace_delete_retries | default(60) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'

@@ -13,12 +13,11 @@
 # 4. Fixture check     — Namespace/critical exists with Deployment/critical-service at
 #                        readyReplicas==0 and PDB/critical-service-pdb; these are the
 #                        resources that trigger the PodDisruptionBudgetLimit alert
-# 5. Cluster updates   — ClusterVersion has availableUpdates (required for the
-#                        AI-assisted precheck section of the module)
-# 6. Agentic workflow  — enables the alerts-adapter severity filter, verifies AgenticRuns
-#                        exist (created automatically by the CVO when updates are available),
-#                        verifies MaaS LLM connectivity from the agentic-operator pod,
-#                        then restores the adapter to its disabled state in an always block
+# 5. Cluster updates   — verify successful update retrieval; no offered update is
+#                        a valid latest-release state, reported as a UI coverage note.
+# 6. Agentic workflow  — verify MaaS connectivity and require a test-owned,
+#                        analysis-only AgenticRun to finish successfully. Do not
+#                        toggle shared alert routing or approve remediation.
 #
 # Steps skipped (web console only, no headless API):
 # - Conversational AI chat questions and workload creation via chat
@@ -43,12 +42,13 @@
     _ols_e2e_status: "{{ _ols_e2e_deployment.get('status', {}) | default({}, true) }}"
     _ols_e2e_desired: "{{ _ols_e2e_deployment.get('spec', {}).get('replicas', 1) | int }}"
   until:
-    - hc_ols_e2e_deploy is succeeded
-    - hc_ols_e2e_deploy.resources | default([], true) | length == 1
-    - _ols_e2e_desired | int >= 1
-    - _ols_e2e_status.get('observedGeneration', 0) | int >= _ols_e2e_deployment.get('metadata', {}).get('generation', 1) | int
-    - _ols_e2e_status.get('readyReplicas', 0) | int >= _ols_e2e_desired | int
-    - _ols_e2e_status.get('availableReplicas', 0) | int >= _ols_e2e_desired | int
+  - hc_ols_e2e_deploy is succeeded
+  - hc_ols_e2e_deploy is succeeded
+  - hc_ols_e2e_deploy.resources | default([], true) | length == 1
+  - _ols_e2e_desired | int >= 1
+  - _ols_e2e_status.get('observedGeneration', 0) | int >= _ols_e2e_deployment.get('metadata', {}).get('generation', 1) | int
+  - _ols_e2e_status.get('readyReplicas', 0) | int >= _ols_e2e_desired | int
+  - _ols_e2e_status.get('availableReplicas', 0) | int >= _ols_e2e_desired | int
   retries: "{{ qa_ols_deployment_retries | default(30) }}"
   delay: "{{ qa_ols_deployment_delay | default(10) }}"
   loop:
@@ -68,6 +68,9 @@
 # -- 2. Config review ------------------------------------------------------
 
 - name: "Ols | Verify azure-api-keys secret exists"
+  until: hc_ols_e2e_secret is succeeded
+  retries: '{{ qa_api_retries | default(12) }}'
+  delay: '{{ qa_poll_delay | default(5) }}'
   kubernetes.core.k8s_info:
     api_version: v1
     kind: Secret
@@ -79,6 +82,9 @@
     hc_ols_e2e_secret.resources | default([]) | length == 0
 
 - name: "Ols | Verify OLSConfig has introspectionEnabled: true"
+  until: hc_ols_e2e_config is succeeded
+  retries: '{{ qa_api_retries | default(12) }}'
+  delay: '{{ qa_poll_delay | default(5) }}'
   kubernetes.core.k8s_info:
     api_version: ols.openshift.io/v1alpha1
     kind: OLSConfig
@@ -97,6 +103,9 @@
   changed_when: false
 
 - name: "Ols | Get lightspeed-app-server pod name"
+  until: hc_ols_e2e_pods is succeeded
+  retries: '{{ qa_api_retries | default(12) }}'
+  delay: '{{ qa_poll_delay | default(5) }}'
   kubernetes.core.k8s_info:
     api_version: v1
     kind: Pod
@@ -154,6 +163,9 @@
 #     → PDB violated (0 healthy < 2 required) → PodDisruptionBudgetLimit fires
 
 - name: "Ols | Verify critical namespace exists"
+  until: hc_ols_e2e_critical_ns is succeeded
+  retries: '{{ qa_api_retries | default(12) }}'
+  delay: '{{ qa_poll_delay | default(5) }}'
   kubernetes.core.k8s_info:
     api_version: v1
     kind: Namespace
@@ -162,6 +174,9 @@
   failed_when: hc_ols_e2e_critical_ns.resources | default([]) | length == 0
 
 - name: "Ols | Verify critical-service deployment has no ready replicas"
+  until: hc_ols_e2e_critical_deploy is succeeded
+  retries: '{{ qa_api_retries | default(12) }}'
+  delay: '{{ qa_poll_delay | default(5) }}'
   kubernetes.core.k8s_info:
     api_version: apps/v1
     kind: Deployment
@@ -173,6 +188,9 @@
     (hc_ols_e2e_critical_deploy.resources[0].status.readyReplicas | default(0) | int) != 0
 
 - name: "Ols | Verify critical-service-pdb PodDisruptionBudget exists"
+  until: hc_ols_e2e_critical_pdb is succeeded
+  retries: '{{ qa_api_retries | default(12) }}'
+  delay: '{{ qa_poll_delay | default(5) }}'
   kubernetes.core.k8s_info:
     api_version: policy/v1
     kind: PodDisruptionBudget
@@ -182,81 +200,48 @@
   failed_when: hc_ols_e2e_critical_pdb.resources | default([]) | length == 0
 
 # -- 5. Cluster update availability ----------------------------------------
-# The AI-assisted precheck section requires at least one update to be available
-# in the cluster. This confirms the console would show the AI assessment section.
+# The UI update exercise needs an offered update, but the default provisioning
+# disables the fake update graph. A healthy cluster at the latest release can
+# legitimately offer none. Test retrieval health; optionally require the demo
+# prerequisite explicitly, without inventing updates or changing ClusterVersion.
 
-- name: "Ols | Verify cluster updates are available for AI precheck"
+- name: "Ols | Verify the cluster update feed is healthy"
   kubernetes.core.k8s_info:
     api_version: config.openshift.io/v1
     kind: ClusterVersion
     name: version
   register: hc_ols_e2e_cv
-  failed_when: >-
-    hc_ols_e2e_cv.resources | default([]) | length == 0 or
-    hc_ols_e2e_cv.resources[0].status.availableUpdates | default([]) | length == 0
+  until:
+  - hc_ols_e2e_cv is succeeded
+  - hc_ols_e2e_cv is succeeded
+  - hc_ols_e2e_cv.resources | default([]) | length == 1
+  - hc_ols_e2e_cv.resources[0].status.conditions | default([]) | selectattr('type', 'equalto', 'RetrievedUpdates') | selectattr('status', 'equalto', 'True') | list | length == 1
+  retries: '{{ qa_readiness_retries | default(30) }}'
+  delay: 10
+
+- name: "Ols | Require an offered update when the update demo is explicitly required"
+  ansible.builtin.assert:
+    that:
+      - hc_ols_e2e_cv.resources[0].status.availableUpdates | default([], true) | length > 0
+    fail_msg: "The update demo was explicitly required, but this cluster offers no update."
+  when: qa_require_cluster_update_demo | default(false) | bool
+
+- name: "Ols | Record update-UI coverage when no update is offered"
+  ansible.builtin.set_fact:
+    qa_coverage_notes: "{{ qa_coverage_notes | default([]) + ['OLS update-precheck UI prerequisite not exercised: healthy feed offers no recommended update; ClusterVersion was not modified.'] }}"
+  when: hc_ols_e2e_cv.resources[0].status.availableUpdates | default([], true) | length == 0
 
 # -- 6. Agentic OLS --------------------------------------------------------
-# Enables the alerts-adapter severity filter (disabled at provisioning time)
-# and verifies that AgenticRuns exist — the CVO creates them automatically
-# when cluster updates are available (confirmed in section 5 above), so they
-# are always present post-provision without waiting for an alert to fire.
-# The always block restores the adapter to its disabled state.
+# Do not depend on pre-existing CVO/alert-created runs. Exercise the actual
+# analysis pipeline using a QA-owned advisory request, with no execution or
+# verification step. Never change shared adapter config or delete learner runs.
 
-- name: "Ols | Enable alerts-adapter and verify AgenticRuns exist"
+- name: "Ols | Verify agentic LLM connectivity and analysis pipeline"
   block:
-    - name: "Ols | Enable critical severity filter on alerts-adapter-config"
-      ansible.builtin.command:
-        argv:
-          - oc
-          - patch
-          - configmap
-          - alerts-adapter-config
-          - -n
-          - openshift-lightspeed
-          - --type
-          - merge
-          - -p
-          - '{"data":{"config.yaml":"filtering:\n  allowedReceivers:\n    - critical\n"}}'
-      changed_when: true
-
-    - name: "Ols | Restart alerts-adapter to pick up the new config"
-      ansible.builtin.command:
-        argv:
-          - oc
-          - rollout
-          - restart
-          - deployment/lightspeed-agentic-alerts-adapter
-          - -n
-          - openshift-lightspeed
-      changed_when: true
-
-    - name: "Ols | Wait for alerts-adapter rollout to complete"
-      ansible.builtin.command:
-        argv:
-          - oc
-          - rollout
-          - status
-          - deployment/lightspeed-agentic-alerts-adapter
-          - -n
-          - openshift-lightspeed
-          - --timeout=120s
-      changed_when: false
-
-    - name: "Ols | Verify AgenticRuns exist (created automatically by the Cluster Version Operator)"
-      ansible.builtin.command:
-        argv:
-          - oc
-          - get
-          - agenticruns
-          - -n
-          - openshift-lightspeed
-          - -o
-          - name
-      register: hc_ols_e2e_agenticruns
-      changed_when: false
-      failed_when: hc_ols_e2e_agenticruns.stdout_lines | default([]) | length == 0
-
     - name: "Ols | Get LLMProvider maas to read MaaS URL"
+      until: hc_ols_e2e_llmprovider is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s_info:
         api_version: agentic.openshift.io/v1alpha1
         kind: LLMProvider
@@ -266,6 +251,9 @@
       failed_when: hc_ols_e2e_llmprovider.resources | default([]) | length == 0
 
     - name: "Ols | Get Agent default to read MaaS model name"
+      until: hc_ols_e2e_agent is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s_info:
         api_version: agentic.openshift.io/v1alpha1
         kind: Agent
@@ -275,6 +263,9 @@
       failed_when: hc_ols_e2e_agent.resources | default([]) | length == 0
 
     - name: "Ols | Get llm-creds-maas secret to read MaaS API key"
+      until: hc_ols_e2e_maas_secret is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s_info:
         api_version: v1
         kind: Secret
@@ -311,43 +302,5 @@
         (hc_ols_e2e_maas.json.choices | default([]) | length == 0) or
         (hc_ols_e2e_maas.json.choices[0].message.content | default('') | length) < 20
 
-  always:
-    - name: "Ols | Disable alerts-adapter severity filter (restore empty allowedReceivers)"
-      ansible.builtin.command:
-        argv:
-          - oc
-          - patch
-          - configmap
-          - alerts-adapter-config
-          - -n
-          - openshift-lightspeed
-          - --type
-          - merge
-          - -p
-          - '{"data":{"config.yaml":"filtering:\n  allowedReceivers: []\n"}}'
-      changed_when: true
-
-    - name: "Ols | Restart alerts-adapter to apply the empty filter"
-      ansible.builtin.command:
-        argv:
-          - oc
-          - rollout
-          - restart
-          - deployment/lightspeed-agentic-alerts-adapter
-          - -n
-          - openshift-lightspeed
-      changed_when: true
-
-    - name: "Ols | Delete any AgenticRuns created by the alerts-adapter"
-      ansible.builtin.command:
-        argv:
-          - oc
-          - delete
-          - agenticruns
-          - -n
-          - openshift-lightspeed
-          - -l
-          - agentic.openshift.io/source=alertmanager
-          - --ignore-not-found
-          - --wait=false
-      changed_when: true
+    - name: "Ols | Exercise an isolated analysis-only AgenticRun"
+      ansible.builtin.include_tasks: ols_agentic_analysis.yml

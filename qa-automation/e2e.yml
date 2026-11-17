@@ -46,6 +46,12 @@
     K8S_AUTH_KUBECONFIG: "{{ k8s_kubeconfig | default(omit) }}"
   vars:
     hc_failures: []
+    qa_coverage_notes:
+      - "LDAP/OIDC cluster-wide OAuth switching is not automated; validate those learner flows separately."
+      - "Security e2e checks vulnerable-workload deployment, not RHACS vulnerability/violation confirmation."
+      - "Observability e2e tests real alert firing; Loki/Tempo installation and UI flows are separate."
+      - "Performance e2e verifies HPA metrics, not VPA installation or load-driven scale-up."
+      - "Agentic e2e approves only its owned analysis-only request; execution approval and remediation execution are not automated."
     # The env lookup returns '' (not undefined) when a var isn't set, so
     # default() needs boolean=true to treat '' as missing too -- otherwise
     # it never overrides the empty string and every module gate defaults
@@ -145,9 +151,14 @@
       when: module_enable_performance
 
     # -- Report ------------------------------------------------------------
-    # acm.yml accumulates into hc_failures (same pattern as healthcheck.yml)
-    # rather than failing fast, so a single e2e run can report every problem
-    # found instead of stopping at the first one.
+    # Required module checks fail the play on actual errors. Coverage notes
+    # report non-automated UI/destructive scenarios separately; they never
+    # clear hc_failures or turn a failed required check into a passing one.
+
+    - name: Report explicit automated-test coverage notes
+      ansible.builtin.debug:
+        var: qa_coverage_notes
+      when: qa_coverage_notes | length > 0
 
     - name: Report healthy
       ansible.builtin.debug:

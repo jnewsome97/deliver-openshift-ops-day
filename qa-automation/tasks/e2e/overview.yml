@@ -69,17 +69,20 @@
   failed_when: output_r.rc != 0 or output_r.stdout_lines | length < 2
 
 - name: "M1 | get token for prometheus/thanos"
+  no_log: true
   ansible.builtin.command: oc whoami -t
   register: token_r
 
 - name: "M1 | get route for prometheus/thanos"
+  until: route_r is succeeded
+  retries: '{{ qa_api_retries | default(12) }}'
+  delay: '{{ qa_poll_delay | default(5) }}'
   kubernetes.core.k8s_info:
     api_version: route.openshift.io/v1
     kind: Route
     name: thanos-querier
     namespace: openshift-monitoring
   register: route_r
-
 - name: "M1 | set info for prometheus/thanos"
   ansible.builtin.set_fact:
     thanos_host: "{{ route_r.resources[0].status.ingress[0].host }}"
@@ -98,6 +101,10 @@
   failed_when: prom_r.status != 200
 
 - name: "M1 | Delete qa-e2e-quick-demo project"
+  register: _qa_retry_overview_13
+  until: _qa_retry_overview_13 is succeeded
+  retries: '{{ qa_api_retries | default(12) }}'
+  delay: '{{ qa_poll_delay | default(5) }}'
   kubernetes.core.k8s:
     state: absent
     api_version: project.openshift.io/v1
@@ -105,17 +112,16 @@
     name: qa-e2e-quick-demo
 
 - name: "M1 | Wait for qa-e2e-quick-demo project to be deleted"
-  ansible.builtin.command: oc get project qa-e2e-quick-demo
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: qa-e2e-quick-demo
   register: command_r
-  until: command_r.rc == 1
-  failed_when: false
-  retries: 10
-  delay: 5
-
-# Wrapped in block/always so a failure anywhere in the deploy/validate steps
-# (e.g. GET httpd asserting the wrong status) still runs cleanup below,
-# instead of aborting the play and leaving qa-e2e-quick-demo stranded on the
-# cluster indefinitely.
+  until:
+  - command_r is succeeded
+  - command_r.resources | default([]) | length == 0
+  retries: '{{ qa_namespace_delete_retries | default(60) }}'
+  delay: '{{ qa_poll_delay | default(5) }}'
 - name: "M1 | Deploy, validate, and clean up qa-e2e-quick-demo"
   block:
     - name: "M1 | Deploy qa-e2e-quick-demo project with httpd"
@@ -135,13 +141,15 @@
       ansible.builtin.command: sleep 3
 
     - name: "M1 | get route for httpd"
+      until: httpd_route_r is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s_info:
         api_version: route.openshift.io/v1
         kind: Route
         name: hello
         namespace: qa-e2e-quick-demo
       register: httpd_route_r
-
     - name: "M1 | set info for httpd"
       ansible.builtin.set_fact:
         httpd_host: "{{ httpd_route_r.resources[0].status.ingress[0].host }}"
@@ -155,6 +163,10 @@
       failed_when: httpd_r.status != 403
   always:
     - name: "M1 | Delete qa-e2e-quick-demo project"
+      register: _qa_retry_overview_22
+      until: _qa_retry_overview_22 is succeeded
+      retries: '{{ qa_api_retries | default(12) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
       kubernetes.core.k8s:
         state: absent
         api_version: project.openshift.io/v1
@@ -162,9 +174,13 @@
         name: qa-e2e-quick-demo
 
     - name: "M1 | Wait for qa-e2e-quick-demo project to be deleted"
-      ansible.builtin.command: oc get project qa-e2e-quick-demo
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Namespace
+        name: qa-e2e-quick-demo
       register: command_r
-      until: command_r.rc == 1
-      failed_when: false
-      retries: 10
-      delay: 5
+      until:
+      - command_r is succeeded
+      - command_r.resources | default([]) | length == 0
+      retries: '{{ qa_namespace_delete_retries | default(60) }}'
+      delay: '{{ qa_poll_delay | default(5) }}'
