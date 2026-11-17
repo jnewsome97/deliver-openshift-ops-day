@@ -2,10 +2,11 @@
 # OpenShift Lightspeed module (module_enable_ols).
 # Mirrors the learner flow from module-13-lightspeed.adoc:
 #
-# 1. Pod verification  — all 9 Deployments in openshift-lightspeed have readyReplicas >= 1
-#                        (classic OLS: app-server, console-plugin, otel-collector,
-#                         postgres-server, rhokp, mcp-server;
-#                         agentic OLS: alerts-adapter, agentic-console-plugin, agentic-operator)
+# 1. Pod verification  — all 10 OLS 2.0.1 Deployments are Available at their current generation
+#                        (classic OLS: operator-controller-manager, app-server, console-plugin,
+#                         otel-collector, postgres-server, rhokp, mcp-server;
+#                         agentic OLS: alerts-adapter, agentic-console-plugin,
+#                         agentic-operator-controller-manager)
 # 2. Config review     — azure-api-keys Secret exists; OLSConfig exists and has introspectionEnabled: true
 # 3. LLM connectivity  — oc exec + curl /v1/query; HTTP 200 + non-empty response proves
 #                        the Azure OpenAI backend is reachable and responding
@@ -27,7 +28,7 @@
 
 # -- 1. Pod verification ---------------------------------------------------
 # Matches the exact `oc get pods -n openshift-lightspeed` the learner runs first.
-# Checks all 9 Deployments by name rather than "any pod Running" to catch a
+# Checks all 10 Deployments by name rather than "any pod Running" to catch a
 # partially-deployed operator where some components are up but others are not.
 
 - name: "Ols | Verify all OpenShift Lightspeed deployments are ready"
@@ -37,15 +38,26 @@
     name: "{{ item }}"
     namespace: openshift-lightspeed
   register: hc_ols_e2e_deploy
-  failed_when: >-
-    hc_ols_e2e_deploy.resources | default([]) | length == 0 or
-    (hc_ols_e2e_deploy.resources[0].status.readyReplicas | default(0) | int) < 1
+  vars:
+    _ols_e2e_deployment: "{{ hc_ols_e2e_deploy.resources | default([], true) | first | default({}) }}"
+    _ols_e2e_status: "{{ _ols_e2e_deployment.get('status', {}) | default({}, true) }}"
+    _ols_e2e_desired: "{{ _ols_e2e_deployment.get('spec', {}).get('replicas', 1) | int }}"
+  until:
+    - hc_ols_e2e_deploy is succeeded
+    - hc_ols_e2e_deploy.resources | default([], true) | length == 1
+    - _ols_e2e_desired | int >= 1
+    - _ols_e2e_status.get('observedGeneration', 0) | int >= _ols_e2e_deployment.get('metadata', {}).get('generation', 1) | int
+    - _ols_e2e_status.get('readyReplicas', 0) | int >= _ols_e2e_desired | int
+    - _ols_e2e_status.get('availableReplicas', 0) | int >= _ols_e2e_desired | int
+  retries: "{{ qa_ols_deployment_retries | default(30) }}"
+  delay: "{{ qa_ols_deployment_delay | default(10) }}"
   loop:
     - lightspeed-agentic-alerts-adapter
     - lightspeed-agentic-console-plugin
-    - lightspeed-agentic-operator
+    - lightspeed-agentic-operator-controller-manager
     - lightspeed-app-server
     - lightspeed-console-plugin
+    - lightspeed-operator-controller-manager
     - lightspeed-otel-collector
     - lightspeed-postgres-server
     - lightspeed-rhokp
@@ -62,6 +74,7 @@
     name: azure-api-keys
     namespace: openshift-lightspeed
   register: hc_ols_e2e_secret
+  no_log: true
   failed_when: >-
     hc_ols_e2e_secret.resources | default([]) | length == 0
 
@@ -80,6 +93,7 @@
 - name: "Ols | Get token for Lightspeed API query"
   ansible.builtin.command: oc whoami -t
   register: hc_ols_e2e_token
+  no_log: true
   changed_when: false
 
 - name: "Ols | Get lightspeed-app-server pod name"
@@ -121,6 +135,7 @@
       - -d
       - '{"query":"What is the difference between a Deployment and a Pod?"}'
   register: hc_ols_e2e_query
+  no_log: true
   changed_when: false
   failed_when: >-
     hc_ols_e2e_query.rc != 0 or
@@ -266,6 +281,7 @@
         name: llm-creds-maas
         namespace: openshift-lightspeed
       register: hc_ols_e2e_maas_secret
+      no_log: true
       failed_when: hc_ols_e2e_maas_secret.resources | default([]) | length == 0
 
     - name: "Ols | Ask MaaS a real question via its /v1/chat/completions API"
@@ -288,6 +304,7 @@
         validate_certs: true
         status_code: 200
       register: hc_ols_e2e_maas
+      no_log: true
       changed_when: false
       failed_when: >-
         hc_ols_e2e_maas.status != 200 or
