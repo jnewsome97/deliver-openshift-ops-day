@@ -1679,6 +1679,57 @@
                   cpu: "{{ showroom_traefik_limits_cpu | default('200m') }}"
                   memory: "{{ showroom_traefik_limits_memory | default('256Mi') }}"
 
+# ==============================================================================
+# Restart-safe conditional Showroom tabs.
+#
+# The content container entrypoint writes ui-config.yml on every start: if
+# the SHOWROOM_UI_CONFIG env var is set it uses that inline YAML, otherwise
+# it copies the committed ui-config.yml (all tabs) from the repo. Setting the
+# env var from the module_enable_* flags makes the tab set survive pod
+# restarts, matching the conditional generation inject-env-vars.sh does once
+# at deploy time. ${DOMAIN} placeholders are left intact: the entrypoint runs
+# envsubst with the chart-provided DOMAIN env at every start.
+# ==============================================================================
+- name: Patch Showroom SHOWROOM_UI_CONFIG (restart-safe conditional tabs)
+  vars:
+    _showroom_ui_tabs: >-
+      {{ [{'name': 'OCP Console', 'url': 'https://console-openshift-console.${DOMAIN}'},
+          {'name': 'Terminal', 'path': '/wetty', 'port': 443}]
+         + ([{'name': 'RHACS', 'url': 'https://central-stackrox.${DOMAIN}'}]
+            if module_enable_security | default(true) | bool else [])
+         + ([{'name': 'ArgoCD', 'url': 'https://openshift-gitops-server-openshift-gitops.${DOMAIN}'}]
+            if (module_enable_acm | default(true) | bool or module_enable_gitops | default(true) | bool) else [])
+         + ([{'name': 'Developer Hub', 'url': 'https://backstage-developer-hub-backstage.${DOMAIN}'}]
+            if module_enable_devhub | default(true) | bool else []) }}
+    _showroom_ui_config: >-
+      {{ {'type': 'showroom',
+          'default_width': 30,
+          'persist_url_state': true,
+          'antora': {'modules': [], 'name': 'openshift-days-ops-track', 'version': 'main'},
+          'tabs': _showroom_ui_tabs} | to_nice_yaml(indent=2) }}
+  register: _ops_retry_days_ops_track_124
+  until: >-
+    (_ops_retry_days_ops_track_124 | deliver_openshift_ops_day.automation.ops_permanent_error) or
+    ((_ops_retry_days_ops_track_124 is succeeded) and (_ops_retry_days_ops_track_124 is succeeded))
+  retries: '{{ ops_day_api_retries | default(120) }}'
+  delay: '{{ ops_day_retry_delay | default(10) }}'
+  kubernetes.core.k8s:
+    state: patched
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: showroom
+        namespace: "{{ showroom_namespace }}"
+      spec:
+        template:
+          spec:
+            containers:
+            - name: content
+              env:
+              - name: SHOWROOM_UI_CONFIG
+                value: "{{ _showroom_ui_config }}"
+
 - name: DEBUG - Showroom Deployment structure after patching
   shell: |
     NS="{{ showroom_namespace }}"
