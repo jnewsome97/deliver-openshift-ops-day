@@ -242,6 +242,10 @@
 # -- External Secrets Operator pattern: qa-e2e SecretStore + ExternalSecret -
 
 - name: "Vault | Deploy, validate, and clean up ESO sync pattern"
+  environment:
+    HELM_CACHE_HOME: /tmp/qa-e2e-helm/cache
+    HELM_CONFIG_HOME: /tmp/qa-e2e-helm/config
+    HELM_DATA_HOME: /tmp/qa-e2e-helm/data
   block:
     - name: "Vault | Write qa-e2e ESO test secret"
       ansible.builtin.command: >-
@@ -273,9 +277,22 @@
             state: directory
             mode: "0755"
 
-        - name: "Vault | Download and extract helm v3.16.4"
+        - name: "Vault | Download checksum-verified helm v3.16.4 with bounded retries"
+          ansible.builtin.get_url:
+            url: https://get.helm.sh/helm-v3.16.4-linux-amd64.tar.gz
+            dest: /tmp/qa-e2e-helm/helm-v3.16.4-linux-amd64.tar.gz
+            # Official helm-v3.16.4-linux-amd64.tar.gz.sha256sum; pin both version and digest.
+            checksum: sha256:fc307327959aa38ed8f9f7e66d45492bb022a66c3e5da6063958254b9767d179
+            mode: "0644"
+            timeout: "{{ qa_download_timeout | default(60) }}"
+          register: qa_helm_download
+          until: qa_helm_download is succeeded
+          retries: "{{ qa_download_retries | default(6) }}"
+          delay: "{{ qa_poll_delay | default(5) }}"
+
+        - name: "Vault | Extract verified local helm archive"
           ansible.builtin.unarchive:
-            src: https://get.helm.sh/helm-v3.16.4-linux-amd64.tar.gz
+            src: /tmp/qa-e2e-helm/helm-v3.16.4-linux-amd64.tar.gz
             dest: /tmp/qa-e2e-helm
             remote_src: true
 
@@ -289,14 +306,19 @@
         eso_helm_bin: "{{ eso_helm_which.stdout | trim }}"
 
     - name: "Vault | Add external-secrets Helm repo"
-      ansible.builtin.command: "{{ eso_helm_bin }} repo add external-secrets https://charts.external-secrets.io"
+      ansible.builtin.command: "{{ eso_helm_bin }} repo add external-secrets https://charts.external-secrets.io --force-update"
       register: eso_repo_add
+      until: eso_repo_add is succeeded
+      retries: "{{ qa_download_retries | default(6) }}"
+      delay: "{{ qa_poll_delay | default(5) }}"
       changed_when: "'has been added' in eso_repo_add.stdout"
-      failed_when: eso_repo_add.rc != 0 and 'already exists' not in eso_repo_add.stderr
-      ignore_errors: true
 
     - name: "Vault | Update external-secrets Helm repo"
       ansible.builtin.command: "{{ eso_helm_bin }} repo update external-secrets"
+      register: eso_repo_update
+      until: eso_repo_update is succeeded
+      retries: "{{ qa_download_retries | default(6) }}"
+      delay: "{{ qa_poll_delay | default(5) }}"
       changed_when: true
 
     - name: "Vault | Install External Secrets Operator (idempotent)"
@@ -408,16 +430,36 @@
         (qa_e2e_synced_secret.resources[0].data.username | default('') | b64decode) != 'qa-e2e-eso-user' or
         (qa_e2e_synced_secret.resources[0].data.password | default('') | b64decode) != 'qa-e2e-eso-password'
   always:
-    # Delete the ExternalSecret FIRST and confirm it's actually gone before
-    # touching anything else -- this is the exact ordering that was missing
-    # on the live cluster where an ExternalSecret's finalizer was orphaned
-    # after ESO's controller was already removed. The Helm release itself is
-    # intentionally left installed (see header comment).
+    # A failed Helm bootstrap may leave no ESO API at all. Check CRD absence
+    # explicitly; API/auth failures still fail and cannot masquerade as absence.
+    - name: "Vault | Discover ExternalSecret API before cleanup"
+      kubernetes.core.k8s_info:
+        api_version: apiextensions.k8s.io/v1
+        kind: CustomResourceDefinition
+        name: externalsecrets.external-secrets.io
+      register: qa_eso_cleanup_es_crd
+      until: qa_eso_cleanup_es_crd is succeeded
+      retries: "{{ qa_api_retries | default(12) }}"
+      delay: "{{ qa_poll_delay | default(5) }}"
+
+    - name: "Vault | Discover SecretStore API before cleanup"
+      kubernetes.core.k8s_info:
+        api_version: apiextensions.k8s.io/v1
+        kind: CustomResourceDefinition
+        name: secretstores.external-secrets.io
+      register: qa_eso_cleanup_store_crd
+      until: qa_eso_cleanup_store_crd is succeeded
+      retries: "{{ qa_api_retries | default(12) }}"
+      delay: "{{ qa_poll_delay | default(5) }}"
+
+    # When installed, remove the ExternalSecret and wait for its finalizer
+    # before removing its provider credentials. Never uninstall shared ESO.
     - name: "Vault | Delete qa-e2e ExternalSecret"
+      when: qa_eso_cleanup_es_crd.resources | length > 0
       register: _qa_retry_vault_33
       until: _qa_retry_vault_33 is succeeded
-      retries: '{{ qa_api_retries | default(12) }}'
-      delay: '{{ qa_poll_delay | default(5) }}'
+      retries: "{{ qa_api_retries | default(12) }}"
+      delay: "{{ qa_poll_delay | default(5) }}"
       no_log: true
       kubernetes.core.k8s:
         state: absent
@@ -425,7 +467,9 @@
         kind: ExternalSecret
         name: qa-e2e-sync-secret
         namespace: vault
+
     - name: "Vault | Wait for qa-e2e ExternalSecret finalizer to clear"
+      when: qa_eso_cleanup_es_crd.resources | length > 0
       no_log: true
       kubernetes.core.k8s_info:
         api_version: external-secrets.io/v1
@@ -434,29 +478,47 @@
         namespace: vault
       register: qa_e2e_es_deleted
       until:
-      - qa_e2e_es_deleted is succeeded
-      - qa_e2e_es_deleted.resources | default([]) | length == 0
-      retries: '{{ qa_readiness_retries | default(60) }}'
+        - qa_e2e_es_deleted is succeeded
+        - qa_e2e_es_deleted.resources | default([]) | length == 0
+      retries: "{{ qa_readiness_retries | default(60) }}"
       delay: 5
-    - name: "Vault | Delete qa-e2e SecretStore, token Secret, and synced Secret"
-      register: _qa_retry_vault_35
-      until: _qa_retry_vault_35 is succeeded
-      retries: '{{ qa_api_retries | default(12) }}'
-      delay: '{{ qa_poll_delay | default(5) }}'
-      no_log: true
+
+    - name: "Vault | Delete qa-e2e SecretStore"
+      when: qa_eso_cleanup_store_crd.resources | length > 0
       kubernetes.core.k8s:
         state: absent
-        api_version: "{{ item.api_version }}"
-        kind: "{{ item.kind }}"
-        name: "{{ item.name }}"
+        api_version: external-secrets.io/v1
+        kind: SecretStore
+        name: qa-e2e-vault-backend
+        namespace: vault
+      register: qa_eso_store_deleted
+      until: qa_eso_store_deleted is succeeded
+      retries: "{{ qa_api_retries | default(12) }}"
+      delay: "{{ qa_poll_delay | default(5) }}"
+      no_log: true
+
+    - name: "Vault | Delete qa-e2e token Secret and synced Secret"
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: Secret
+        name: "{{ item }}"
         namespace: vault
       loop:
-        - { api_version: "external-secrets.io/v1", kind: SecretStore, name: qa-e2e-vault-backend }
-        - { api_version: v1, kind: Secret, name: qa-e2e-vault-token }
-        - { api_version: v1, kind: Secret, name: qa-e2e-secret-sync }
+        - qa-e2e-vault-token
+        - qa-e2e-secret-sync
+      register: qa_eso_secrets_deleted
+      until: qa_eso_secrets_deleted is succeeded
+      retries: "{{ qa_api_retries | default(12) }}"
+      delay: "{{ qa_poll_delay | default(5) }}"
+      no_log: true
+
     - name: "Vault | Delete qa-e2e ESO test secret"
       ansible.builtin.command: >-
         oc exec -n vault vault-0 -- sh -c
         "VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=root vault kv metadata delete secret/qa-e2e-eso-test"
-      ignore_errors: true
+      register: qa_eso_kv_deleted
+      until: qa_eso_kv_deleted is succeeded
+      retries: "{{ qa_api_retries | default(12) }}"
+      delay: "{{ qa_poll_delay | default(5) }}"
       changed_when: true

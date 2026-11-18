@@ -49,6 +49,16 @@ New retry controls: `qa_api_retries` (default 12), `qa_poll_delay` (default 5s),
 analysis polling controls. Budgets are per stage, cumulative, and exclude
 request duration.
 
+Helm bootstrap pins v3.16.4 and its official SHA-256. Download uses a finite
+`qa_download_retries` budget (default 6 retries after the initial attempt),
+`qa_download_timeout` socket timeout (default 60s), and verified local extraction.
+Helm repository operations also retry without ignoring permanent failures and
+use private QA config/cache paths. If bootstrap fails before ESO APIs exist,
+cleanup confirms CRD absence before skipping only custom-resource deletion;
+API/auth failures remain fatal. When ESO exists, ExternalSecret finalizers must
+clear before provider credentials are removed. ESO installation and secret
+sync are still required assertions, never skipped to hide a bootstrap failure.
+
 ## Coverage boundaries
 
 The final play output reports known boundaries: LDAP/OIDC OAuth switching,
