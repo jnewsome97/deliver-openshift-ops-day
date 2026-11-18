@@ -1550,6 +1550,135 @@
               - configMapRef:
                   name: workshop-vars
 
+# ==============================================================================
+# Seed module flags into the showroom-userdata ConfigMap.
+#
+# The antora-builder init container mounts this ConfigMap at /user_data/ and
+# merges user_data.yml into content/antora.yml asciidoc attributes on every
+# build. Seeding the lowercase module_enable_* flags here (values must be
+# 'true'/'false' strings to match the ifeval conditionals in nav.adoc) makes
+# module selection survive any showroom pod restart. Without this, the
+# one-shot injection below is the only thing applying module selection, and
+# a pod restart (eviction, OOM, node churn) rebuilds the site with the
+# all-true defaults from site.yml.
+# ==============================================================================
+- name: Fetch showroom-userdata ConfigMap
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: ConfigMap
+    name: "{{ showroom_userdata_configmap | default('showroom-userdata') }}"
+    namespace: "{{ showroom_namespace }}"
+  register: showroom_userdata_cm
+
+- name: Seed module flags into showroom-userdata ConfigMap (restart-safe module gating)
+  when: showroom_userdata_cm.resources | default([]) | length > 0
+  vars:
+    _module_flags:
+      module_enable_install: "{{ module_enable_install | default(true) | bool | ternary('true', 'false') }}"
+      module_enable_appmgmt: "{{ module_enable_appmgmt | default(true) | bool | ternary('true', 'false') }}"
+      module_enable_ingress: "{{ module_enable_ingress | default(true) | bool | ternary('true', 'false') }}"
+      module_enable_netsec: "{{ module_enable_netsec | default(true) | bool | ternary('true', 'false') }}"
+      module_enable_debugging: "{{ module_enable_debugging | default(true) | bool | ternary('true', 'false') }}"
+      module_enable_gitops: "{{ module_enable_gitops | default(true) | bool | ternary('true', 'false') }}"
+      module_enable_ldap: "{{ module_enable_ldap | default(true) | bool | ternary('true', 'false') }}"
+      module_enable_oidc: "{{ module_enable_oidc | default(true) | bool | ternary('true', 'false') }}"
+      module_enable_observability: "{{ module_enable_observability | default(true) | bool | ternary('true', 'false') }}"
+      module_enable_performance: "{{ module_enable_performance | default(true) | bool | ternary('true', 'false') }}"
+      module_enable_virt: "{{ module_enable_virt | default(true) | bool | ternary('true', 'false') }}"
+      module_enable_devhub: "{{ module_enable_devhub | default(true) | bool | ternary('true', 'false') }}"
+      module_enable_ols: "{{ module_enable_ols | default(true) | bool | ternary('true', 'false') }}"
+      module_enable_acm: "{{ module_enable_acm | default(true) | bool | ternary('true', 'false') }}"
+      module_enable_security: "{{ module_enable_security | default(true) | bool | ternary('true', 'false') }}"
+      module_enable_ztwim: "{{ module_enable_ztwim | default(true) | bool | ternary('true', 'false') }}"
+      module_enable_vault: "{{ module_enable_vault | default(true) | bool | ternary('true', 'false') }}"
+  register: _ops_retry_days_ops_track_121
+  until: >-
+    (_ops_retry_days_ops_track_121 | deliver_openshift_ops_day.automation.ops_permanent_error) or
+    ((_ops_retry_days_ops_track_121 is succeeded) and (_ops_retry_days_ops_track_121 is succeeded))
+  retries: '{{ ops_day_api_retries | default(120) }}'
+  delay: '{{ ops_day_retry_delay | default(10) }}'
+  kubernetes.core.k8s:
+    state: patched
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: "{{ showroom_userdata_configmap | default('showroom-userdata') }}"
+        namespace: "{{ showroom_namespace }}"
+      data:
+        user_data.yml: >-
+          {{ showroom_userdata_cm.resources[0].data['user_data.yml'] | default('{}') | from_yaml
+             | combine(_module_flags) | to_nice_yaml(indent=2, default_style='"') }}
+
+# ==============================================================================
+# Showroom pod stability under node pressure.
+#
+# The showroom-single-pod chart (2.2.x) gives the traefik container 16Mi
+# memory request / 64Mi limit — actual idle usage is ~16Mi, so under load it
+# OOM-kills, and its tiny requests make the whole pod the first eviction
+# target when heavy operator installs (CNV, ACS) stress node memory. An
+# evicted showroom pod rebuilds from user_data (now correctly seeded above),
+# but each eviction still interrupts the student session. Raise the pod
+# priority so kubelet node-pressure eviction skips it, and give traefik real
+# headroom. Container-name guarded: patching a container that a chart layout
+# does not define would make Kubernetes reject the patch.
+# ==============================================================================
+- name: Patch Showroom pod priority class (eviction protection)
+  register: _ops_retry_days_ops_track_122
+  until: >-
+    (_ops_retry_days_ops_track_122 | deliver_openshift_ops_day.automation.ops_permanent_error) or
+    ((_ops_retry_days_ops_track_122 is succeeded) and (_ops_retry_days_ops_track_122 is succeeded))
+  retries: '{{ ops_day_api_retries | default(120) }}'
+  delay: '{{ ops_day_retry_delay | default(10) }}'
+  kubernetes.core.k8s:
+    state: patched
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: showroom
+        namespace: "{{ showroom_namespace }}"
+      spec:
+        template:
+          spec:
+            priorityClassName: "{{ showroom_pod_priority_class_name | default('system-node-critical') }}"
+
+- name: Get Showroom container names
+  command: >
+    oc get deployment showroom -n {{ showroom_namespace }}
+    -o jsonpath='{.spec.template.spec.containers[*].name}'
+  register: showroom_container_names
+  changed_when: false
+
+- name: Patch Showroom traefik container resources (OOM headroom)
+  when: "'traefik' in showroom_container_names.stdout | default('')"
+  register: _ops_retry_days_ops_track_123
+  until: >-
+    (_ops_retry_days_ops_track_123 | deliver_openshift_ops_day.automation.ops_permanent_error) or
+    ((_ops_retry_days_ops_track_123 is succeeded) and (_ops_retry_days_ops_track_123 is succeeded))
+  retries: '{{ ops_day_api_retries | default(120) }}'
+  delay: '{{ ops_day_retry_delay | default(10) }}'
+  kubernetes.core.k8s:
+    state: patched
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: showroom
+        namespace: "{{ showroom_namespace }}"
+      spec:
+        template:
+          spec:
+            containers:
+            - name: traefik
+              resources:
+                requests:
+                  cpu: "{{ showroom_traefik_requests_cpu | default('50m') }}"
+                  memory: "{{ showroom_traefik_requests_memory | default('64Mi') }}"
+                limits:
+                  cpu: "{{ showroom_traefik_limits_cpu | default('200m') }}"
+                  memory: "{{ showroom_traefik_limits_memory | default('256Mi') }}"
+
 - name: DEBUG - Showroom Deployment structure after patching
   shell: |
     NS="{{ showroom_namespace }}"
